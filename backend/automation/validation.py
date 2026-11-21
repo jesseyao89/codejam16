@@ -8,12 +8,20 @@ def validate_invoice(invoice_data: dict) -> list:
 
     # 1. Check required fields
     required_fields = [
-        "vendor_name",
         "invoice_number",
         "invoice_date",
         "currency",
         "total",
     ]
+
+    # Require at least one vendor identifier
+    if not invoice_data.get("vendor_name") and not invoice_data.get("vendor_id"):
+        findings.append({
+            "code": "MISSING_FIELD",
+            "severity": "BLOCK",
+            "message": "Missing vendor name or vendor ID.",
+            "evidence": {"field": "vendor_name/vendor_id"}
+        })
 
     for field in required_fields:
         if not invoice_data.get(field):

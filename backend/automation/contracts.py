@@ -95,21 +95,21 @@ def match_contract(invoice_data: dict, contracts: list) -> list:
             "evidence": {"contract_id": contract_id}
         })
 
-    # Check fixed monthly fee.
+       # Check fixed monthly fee.
     if contract.get("billing_type") == "fixed_monthly":
         try:
-            invoice_total = Decimal(str(invoice_data["total"]))
+            invoice_subtotal = Decimal(str(invoice_data["subtotal"]))
             monthly_fee = Decimal(str(contract["monthly_fee"]))
 
-            if invoice_total > monthly_fee:
+            if invoice_subtotal > monthly_fee:
                 findings.append({
                     "code": "CONTRACT_FEE_EXCEEDED",
                     "severity": "BLOCK",
-                    "message": "Invoice exceeds contracted monthly fee.",
+                    "message": "Invoice subtotal exceeds contracted monthly fee.",
                     "evidence": {
-                        "invoice_total": str(invoice_total),
+                        "invoice_subtotal": str(invoice_subtotal),
                         "monthly_fee": str(monthly_fee),
-                        "difference": str(invoice_total - monthly_fee)
+                        "difference": str(invoice_subtotal - monthly_fee)
                     }
                 })
 
