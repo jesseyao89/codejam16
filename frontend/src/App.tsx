@@ -2,9 +2,15 @@ import {
   Box,
   Card,
   CardContent,
+  TextField,
   Chip,
   Container,
   CssBaseline,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  Button,
   Stack,
   Table,
   TableBody,
@@ -15,7 +21,13 @@ import {
   ThemeProvider,
   Typography,
   createTheme,
+  FormControl,
+  InputLabel,
+  Select,
+  MenuItem,
 } from '@mui/material'
+
+import blueberiLogo from './blueberi-logo.png'
 
 import { useState } from 'react'
 
@@ -114,34 +126,68 @@ function Sidebar({
         '& .MuiDrawer-paper': {
   width: 240,
   boxSizing: 'border-box',
-  backgroundColor: '#171B24',
+  backgroundColor: '#59678F',
   color: '#FFFFFF',
   borderRight: 'none',
 },
       }}
     >
-      <Box sx={{ p: 3 }}>
-        <Typography variant="h6" sx={{ fontWeight: 700 }}>
-          Brim AP
-        </Typography>
-        <Typography variant="body2" color="text.secondary">
-          Automation Platform
-        </Typography>
-      </Box>
+      <Box sx={{ px: 3, pt: 8, pb: 3 }}>
+  <Stack
+  direction="row"
+  spacing={1.5}
+  sx={{ alignItems: 'flex-start' }}
+>
+    <Box
+  component="img"
+  src={blueberiLogo}
+  alt="BLUEBERI Logo"
+  sx={{
+    width: 40,
+    height: 40,
+    objectFit: 'contain',
+    mt: 0.5,
+  }}
+/>
+
+    <Box>
+      <Typography variant="h6" sx={{ fontWeight: 700 }}>
+        BLUEBERI
+      </Typography>
+
+      <Typography variant="body2" sx={{ color: '#E0E5F0' }}>
+        Invoice Automation
+      </Typography>
+    </Box>
+  </Stack>
+</Box>
 
       <Divider />
 
       <List sx={{ px: 1 }}>
         {menuItems.map((item) => (
           <ListItemButton
-            key={item.label}
-            selected={item.label === currentPage}
-            onClick={() => setCurrentPage(item.label)}
-            sx={{ borderRadius: 3, mb: 0.5 }}
-          >
+  key={item.label}
+  selected={item.label === currentPage}
+  onClick={() => setCurrentPage(item.label)}
+  sx={{
+    borderRadius: 2,
+    mb: 0.5,
+    color: '#FFFFFF',
+    '&.Mui-selected': {
+      backgroundColor: '#404D73',
+    },
+    '&.Mui-selected:hover': {
+      backgroundColor: '#354263',
+    },
+    '&:hover': {
+      backgroundColor: '#6B789C',
+    },
+  }}
+>
             <ListItemIcon
   sx={{
-    color: item.label === currentPage ? '#C7F36B' : '#D1D5DB',
+    color: '#FFFFFF',
     minWidth: 40,
   }}
 >
@@ -150,7 +196,7 @@ function Sidebar({
             <ListItemText
   primary={item.label}
   sx={{
-    color: item.label === currentPage ? '#C7F36B' : '#FFFFFF',
+   color: '#FFFFFF',
   }}
 />
           </ListItemButton>
@@ -162,6 +208,9 @@ function Sidebar({
 
 function App() {
   const [currentPage, setCurrentPage] = useState('Dashboard')
+  const [searchQuery, setSearchQuery] = useState('')
+  const [statusFilter, setStatusFilter] = useState('All')
+  const [selectedInvoiceId, setSelectedInvoiceId] = useState<string | null>(null)
   return (
     <ThemeProvider theme={theme}>
       <CssBaseline />
@@ -175,24 +224,20 @@ function App() {
         sx={{
           minHeight: '100vh',
           ml: '240px',
-          py: 5,
+          py: 8,
         }}
       >
         <Container maxWidth="lg">
-          <Typography variant="h5" sx={{ fontWeight: 600, mb: 3 }}>
-            {currentPage}
-          </Typography>
+         <Typography
+  variant="h4"
+  sx={{ fontWeight: 700, mb: 5 }}
+>
+  {currentPage}
+</Typography>
 
-          <Typography color="text.secondary" sx={{ mb: 4 }}>
-            AI-powered accounts payable management
-          </Typography>
-
-          <Typography variant="h5" sx={{ fontWeight: 600, mb: 3 }}>
-            Dashboard
-          </Typography>
-
-          {currentPage === 'Dashboard' ? (
+          {(currentPage === 'Dashboard' || currentPage === 'Invoices') ? (
             <>
+              {currentPage === 'Dashboard' && (
               <Stack
                 direction={{ xs: 'column', md: 'row' }}
                 spacing={3}
@@ -216,9 +261,45 @@ function App() {
                   </Card>
                 ))}
               </Stack>
+              )}
+              {currentPage === 'Invoices' && (
+  <Stack direction="row" spacing={2} sx={{ mb: 3 }}>
+    <TextField
+      fullWidth
+      size="small"
+      placeholder="Search invoices by ID or vendor..."
+      value={searchQuery}
+      onChange={(event) => setSearchQuery(event.target.value)}
+      sx={{ backgroundColor: '#FFFFFF' }}
+    />
 
+    <FormControl size="small" sx={{ minWidth: 180 }}>
+      <InputLabel>Status</InputLabel>
+      <Select
+  label="Status"
+  value={statusFilter}
+  onChange={(event) => setStatusFilter(event.target.value)}
+  sx={{ backgroundColor: '#FFFFFF' }}
+>
+        <MenuItem value="All">All Statuses</MenuItem>
+        <MenuItem value="Pending Review">Pending Review</MenuItem>
+        <MenuItem value="Approved">Approved</MenuItem>
+        <MenuItem value="Flagged">Flagged</MenuItem>
+      </Select>
+    </FormControl>
+  </Stack>
+)}
               <TableContainer component={Card}>
-                <Table>
+  <Table
+    sx={{
+      '& .MuiTableCell-root': {
+        border: '1px solid #D6DCE8',
+      },
+      '& .MuiTableHead-root': {
+        backgroundColor: '#E9EDF5',
+      },
+    }}
+  >
                   <TableHead>
                     <TableRow>
                       <TableCell>Invoice ID</TableCell>
@@ -229,24 +310,56 @@ function App() {
                   </TableHead>
 
                   <TableBody>
-                    {invoices.map((invoice) => (
-                      <TableRow key={invoice.id}>
+                    {invoices
+  .filter((invoice) => {
+    if (currentPage !== 'Invoices') return true
+
+    const matchesSearch =
+      invoice.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      invoice.vendor.toLowerCase().includes(searchQuery.toLowerCase())
+
+    const matchesStatus =
+      statusFilter === 'All' || invoice.status === statusFilter
+
+    return matchesSearch && matchesStatus
+  })
+  .map((invoice) => (
+                      <TableRow
+  key={invoice.id}
+  hover
+  onClick={() => setSelectedInvoiceId(invoice.id)}
+  sx={{
+    cursor: 'pointer',
+    '&:hover': {
+      backgroundColor: '#F0F3FA !important',
+    },
+  }}
+>
                         <TableCell>{invoice.id}</TableCell>
                         <TableCell>{invoice.vendor}</TableCell>
                         <TableCell>{invoice.amount}</TableCell>
-                        <TableCell>
-                          <Chip
-                            label={invoice.status}
-                            color={
-                              invoice.status === 'Approved'
-                                ? 'success'
-                                : invoice.status === 'Flagged'
-                                  ? 'error'
-                                  : 'warning'
-                            }
-                            size="small"
-                          />
-                        </TableCell>
+                        <TableCell
+  sx={{
+    backgroundColor:
+      invoice.status === 'Approved'
+        ? '#C5E3CD'
+        : invoice.status === 'Flagged'
+          ? '#EFC2C2'
+          : '#F5DFA8',
+
+    color:
+      invoice.status === 'Approved'
+        ? '#376B48'
+        : invoice.status === 'Flagged'
+          ? '#A34A4A'
+          : '#926B24',
+
+    fontWeight: 600,
+    textAlign: 'center',
+  }}
+>
+  {invoice.status}
+</TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
@@ -259,12 +372,31 @@ function App() {
                 <Typography variant="h6">
                   {currentPage}
                 </Typography>
-                <Typography color="text.secondary">
-                  This page is under development.
-                </Typography>
               </CardContent>
             </Card>
           )}
+        <Dialog
+  open={selectedInvoiceId !== null}
+  onClose={() => setSelectedInvoiceId(null)}
+  maxWidth="sm"
+  fullWidth
+>
+  <DialogTitle>
+    Invoice Details
+  </DialogTitle>
+
+  <DialogContent>
+    <Typography variant="body1">
+      Invoice ID: {selectedInvoiceId}
+    </Typography>
+  </DialogContent>
+
+  <DialogActions>
+    <Button onClick={() => setSelectedInvoiceId(null)}>
+      Close
+    </Button>
+  </DialogActions>
+</Dialog>
         </Container>
       </Box>
     </ThemeProvider>
