@@ -12,6 +12,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.accounts.delegations import principals_for_delegate
 from apps.accounts.permissions import role_required
 from apps.approvals import services
 from apps.approvals.models import ApprovalPolicy
@@ -44,11 +45,13 @@ class ApprovalListView(generics.ListAPIView):
         actionable_user = user.is_active and user.status == "active"
         assigned_to_user = Q(pk__in=[])
         if actionable_user:
+            principal_ids = principals_for_delegate(user)
             assigned_to_user = (
                 Q(approver=user)
-                | Q(approver__delegate=user, approver__status="on_leave")
                 | Q(approver__isnull=True, approver_role=user.role)
             )
+            if principal_ids:
+                assigned_to_user |= Q(approver_id__in=principal_ids)
         if params.get("mine") in _TRUTHY or params.get("actionable") in _TRUTHY:
             queryset = queryset.filter(assigned_to_user)
         if params.get("actionable") in _TRUTHY:

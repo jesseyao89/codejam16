@@ -19,6 +19,7 @@ from django.db.models import Max, Q
 from django.utils import timezone
 from rest_framework.exceptions import NotFound, ValidationError
 
+from apps.accounts.delegations import principals_for_delegate
 from apps.accounts.exceptions import InvalidStateTransition, ValidationBlocked
 from apps.accounts.models import Department, User
 from apps.approvals.models import ApprovalStep
@@ -89,9 +90,11 @@ def visible_invoices(user):
         return queryset
 
     is_active = user.is_active and user.status == "active"
-    delegated = Q(
-        approval_steps__approver__delegate=user,
-        approval_steps__approver__status="on_leave",
+    principal_ids = principals_for_delegate(user) if is_active else set()
+    delegated = (
+        Q(approval_steps__approver_id__in=principal_ids)
+        if principal_ids
+        else Q(pk__in=[])
     )
     if user.role == "APPROVER":
         # Own department, plus invoices where they are an assigned approver or
@@ -119,9 +122,10 @@ def dashboard_summary(user) -> dict:
 
     action_filter = Q(pk__in=[])
     if user.is_active and user.status == "active":
-        action_filter = Q(approver=user) | Q(
-            approver__delegate=user, approver__status="on_leave"
-        )
+        action_filter = Q(approver=user)
+        principal_ids = principals_for_delegate(user)
+        if principal_ids:
+            action_filter |= Q(approver_id__in=principal_ids)
     pending_approvals = (
         ApprovalStep.objects.filter(
             action_filter,
