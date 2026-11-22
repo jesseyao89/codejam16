@@ -9,6 +9,10 @@ import {
   DialogActions,
   DialogContent,
   DialogTitle,
+  FormControl,
+  InputLabel,
+  MenuItem,
+  Select,
   Stack,
   Table,
   TableBody,
@@ -63,12 +67,34 @@ const initialApprovals: Approval[] = [
 
 export default function Approvals() {
   const [approvals, setApprovals] = useState(initialApprovals)
+  
+  const [demoRole, setDemoRole] = useState<
+    'AP Clerk' | 'Manager' | 'Finance Admin'
+  >('AP Clerk')
 
   const [selectedApproval, setSelectedApproval] =
     useState<Approval | null>(null)
 
   const [action, setAction] =
     useState<'Approved' | 'Rejected' | null>(null)
+
+      const [accessDenied, setAccessDenied] = useState(false)
+
+  const canApprove = demoRole !== 'AP Clerk'
+
+  const handleApprovalAttempt = (
+    approval: Approval,
+    decision: 'Approved' | 'Rejected'
+  ) => {
+    if (!canApprove) {
+      setAccessDenied(true)
+      return
+    }
+
+    setSelectedApproval(approval)
+    setAction(decision)
+  }
+
 
   const pendingCount = approvals.filter(
     (approval) => approval.status === 'Pending'
@@ -104,6 +130,23 @@ export default function Approvals() {
   return (
     <Box>
       {/* DEMO NOTICE */}
+            {/* DEMO ACCOUNT SWITCHER */}
+      <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 3 }}>
+        <FormControl size="small" sx={{ minWidth: 220 }}>
+          <InputLabel>Demo Account</InputLabel>
+          <Select
+            value={demoRole}
+            label="Demo Account"
+            onChange={(event) =>
+              setDemoRole(event.target.value as typeof demoRole)
+            }
+          >
+            <MenuItem value="AP Clerk">👤 AP Clerk</MenuItem>
+            <MenuItem value="Manager">👔 Manager</MenuItem>
+            <MenuItem value="Finance Admin">🔐 Finance Admin</MenuItem>
+          </Select>
+        </FormControl>
+      </Box>
       <Box
         sx={{
           mb: 3,
@@ -237,10 +280,7 @@ export default function Approvals() {
                         <Button
                           size="small"
                           variant="contained"
-                          onClick={() => {
-                            setSelectedApproval(approval)
-                            setAction('Approved')
-                          }}
+                          onClick={() => handleApprovalAttempt(approval, 'Approved')}
                           sx={{
                             backgroundColor: '#2E7D4F',
                             '&:hover': {
@@ -278,7 +318,30 @@ export default function Approvals() {
           </Table>
         </TableContainer>
       </Card>
+      {/* ACCESS DENIED DIALOG */}
+      <Dialog
+        open={accessDenied}
+        onClose={() => setAccessDenied(false)}
+        maxWidth="xs"
+        fullWidth
+      >
+        <DialogTitle sx={{ color: '#B54747', fontWeight: 700 }}>
+          🔒 Access Denied
+        </DialogTitle>
 
+        <DialogContent>
+          <Typography>
+            Your current role ({demoRole}) does not have permission
+            to approve invoices.
+          </Typography>
+        </DialogContent>
+
+        <DialogActions>
+          <Button onClick={() => setAccessDenied(false)}>
+            Close
+          </Button>
+        </DialogActions>
+      </Dialog>
       {/* CONFIRMATION DIALOG */}
       <Dialog
         open={selectedApproval !== null}
