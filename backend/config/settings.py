@@ -50,6 +50,7 @@ INSTALLED_APPS = [
     "apps.accounts",
     "apps.vendors",
     "apps.invoices",
+    "apps.inbox",
     "apps.approvals",
     "apps.payments",
     "apps.audit",
@@ -177,3 +178,8 @@ REST_FRAMEWORK = {
 DATA_DIR = Path(
     os.environ.get("DATA_DIR", BASE_DIR.parent / "datasets" / "brim_ap_dataset")
 )
+
+# Optional override for the inbox attachment directory. When unset, the inbox
+# service uses DATA_DIR/incoming_invoices at request time (so DATA_DIR overrides
+# are respected).
+INBOX_ATTACHMENT_DIR = os.environ.get("INBOX_ATTACHMENT_DIR")

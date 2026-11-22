@@ -125,6 +125,8 @@ PaymentStatus     PREPARED | SCHEDULED | RELEASED | PAID | FAILED | CANCELLED
 VendorStatus      active | on_hold | pending_review
 BankChangeStatus  pending | approved | rejected
 EmailClass        INVOICE | NOT_INVOICE | UNCERTAIN
+EmailStatus       NEW | INGESTED | PARTIAL | ROUTED | DISMISSED
+EmailAttachmentStatus NEW | INGESTED | FAILED
 ```
 
 ### 1.4 Shared object shapes
@@ -283,14 +285,17 @@ FOREIGN   Foreign vendor, no Canadian tax charged
 GET    /api/inbox/                     -> paginated Email
 POST   /api/inbox/sync/                -> { ingested, skipped, routed }
 GET    /api/inbox/{id}/                -> Email
-POST   /api/inbox/{id}/ingest/         -> Invoice      (attachment -> DRAFT bill)
+POST   /api/inbox/{id}/ingest/         -> { email, invoices[] }  (one draft per attachment)
 POST   /api/inbox/{id}/dismiss/        -> 204
 ```
 
 - `sync` reads the AP inbox (dataset `inbox/emails.json` in dev), classifies
-  each email, and creates draft bills for attachment-bearing invoices.
+  each email, and creates **one draft per attachment** for attachment-bearing
+  invoices.
 - Emails that are not invoices, or have no attachment, are classified and NOT
-  turned into bills; they appear in `routed` for review.
+  turned into bills; they are `ROUTED` for review.
+- `ingest` turns the email's attachments into drafts on demand (all by default,
+  or one via `{ "attachment": "<filename>" }`). It is idempotent per attachment.
 - Upload path: `POST /api/invoices/upload/` (multipart `file`) does the same
   for a direct upload.
 
@@ -302,14 +307,16 @@ attachment always produces a reviewable `DRAFT` invoice:
 | Situation | Result |
 |---|---|
 | Extraction succeeds | `DRAFT` with populated `extraction`; `validation_status` from the checks |
-| Extraction fails / times out / malformed model output | `DRAFT`, `extraction` fields `null`, `validation_status: "BLOCKED"`, finding `EXTRACTION_FAILED` |
-| File unreadable or corrupt | `DRAFT`, `validation_status: "BLOCKED"`, finding `EXTRACTION_UNREADABLE`; the original file is kept |
+| Extraction fails / times out / malformed model output / corrupt content | `DRAFT`, `extraction` fields `null`, `validation_status: "BLOCKED"`, finding `EXTRACTION_FAILED` |
+| File missing or unreadable | `DRAFT`, `validation_status: "BLOCKED"`, finding `EXTRACTION_UNREADABLE`; the original file is kept if present |
 | Unknown vendor | `vendor: null`, `validation_status: "BLOCKED"`, finding `VENDOR_UNKNOWN`; the clerk assigns a vendor and re-runs `/analyze/` |
 | File cannot be stored at all | `400 VALIDATION_ERROR`; no invoice is created |
 
-`POST /api/invoices/upload/` and `POST /api/inbox/{id}/ingest/` return `201`
-with the created `Invoice`. Extraction only ever returns `null` for missing
-values; it never guesses a field.
+`POST /api/invoices/upload/` returns `201` with the created `Invoice`.
+`POST /api/inbox/{id}/ingest/` returns `200` with
+`{ "email": Email, "invoices": Invoice[] }` (one draft per attachment).
+Extraction only ever returns `null` for missing values; it never guesses a
+field.
 
 **Email**
 
@@ -322,12 +329,27 @@ values; it never guesses a field.
   "received_at": "2026-09-02T14:05:00Z",
   "body_excerpt": "Please find attached...",
   "attachment": { "filename": "inv.pdf", "content_type": "application/pdf" },
+  "attachments": [
+    {
+      "filename": "inv.pdf",
+      "content_type": "application/pdf",
+      "order": 0,
+      "status": "INGESTED",
+      "invoice_id": "AP-00051",
+      "error": ""
+    }
+  ],
   "classification": "INVOICE",
   "classification_confidence": "0.94",
   "invoice_id": "AP-00051",
+  "invoice_ids": ["AP-00051"],
   "status": "INGESTED"
 }
 ```
+
+`attachment` / `invoice_id` are the primary (first) attachment/invoice for
+backward compatibility; `attachments[]` / `invoice_ids[]` carry all of them.
+One email can produce multiple invoices (for example two invoice PDFs).
 
 ## 5. Invoices — extraction, coding, validation (features 2–5)
 

@@ -19,6 +19,7 @@ from django.db import transaction
 
 from apps.accounts.models import Department, User
 from apps.approvals.models import ApprovalPolicy, ApprovalStep
+from apps.inbox.loader import load_emails
 from apps.invoices.models import FXRate, GLAccount, Invoice, InvoiceLine, TaxCode
 from apps.payments.models import BankStatement, CardTransaction, Payment
 from apps.vendors.models import BankChange, Contract, PurchaseOrder, Vendor
@@ -506,4 +507,5 @@ class Loader:
             counts["approval_policies"] = self.load_approval_policies()
             counts["bank_statement"] = self.load_bank_statement()
             counts["card_transactions"] = self.load_card_transactions()
+            counts["emails"] = load_emails(self.data_dir, self.errors)
             return counts
