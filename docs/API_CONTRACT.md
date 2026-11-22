@@ -436,8 +436,12 @@ Filters for the list: `status`, `vendor_id`, `department_id`, `requester_id`,
 - `tax_lines` map each tax amount to a supplied tax code; `rate` is a string
   decimal (`"0.13"`). Place of supply is `ship_to_province`.
 - `lines` carry the accepted coding; `coding_suggestions` carry per-line
-  suggestions with a reason. Accepting or changing a suggestion is a `PATCH` and
-  is audited.
+  suggestions with a reason. Each suggestion has `line_no`,
+  `suggested_gl_account`, `suggested_department_id`, `confidence` and `reason`.
+  Suggestions are learned from the vendor's historical lines first, with an AI
+  fallback for unmatched lines; a line with no confident suggestion returns
+  `suggested_gl_account: null` and a reason asking for manual review. Accepted
+  or changed coding is a `PATCH` and is audited.
 
 ### 5.2 AnalysisResponse (canonical envelope)
 

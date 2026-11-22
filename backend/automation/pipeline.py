@@ -5,7 +5,7 @@ from .duplicates import detect_duplicates
 from .fraud import detect_bank_change_risk
 from .matching import match_purchase_order
 from .contracts import match_contract
-from .coding import suggest_gl_account
+from .coding import suggest_coding
 
 
 def analyze_invoice(invoice_data: dict, reference_data: dict) -> dict:
@@ -40,15 +40,13 @@ def analyze_invoice(invoice_data: dict, reference_data: dict) -> dict:
             reference_data.get("contracts", [])
         ))
 
-    # 6. Suggest GL accounts using AI (best-effort; degrades to manual coding).
+    # 6. Suggest per-line GL/department coding (best-effort; degrades to
+    # explicit null suggestions that require manual review).
     coding_suggestions = []
 
-    if reference_data.get("gl_accounts"):
+    if invoice_data.get("line_items"):
         try:
-            coding_suggestions = suggest_gl_account(
-                invoice_data,
-                reference_data["gl_accounts"]
-            )
+            coding_suggestions = suggest_coding(invoice_data, reference_data)
         except Exception:  # noqa: BLE001 - provider errors degrade gracefully
             coding_suggestions = []
 

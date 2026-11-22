@@ -199,6 +199,96 @@ def test_analyze_returns_envelope(client, vendor):
     assert response.data["extraction"]["tax_lines"][0]["tax_code"] == "GST5"
 
 
+@pytest.mark.django_db
+def test_analyze_suggests_coding_per_line_from_history(client, vendor):
+    dept = Department.objects.create(department_id="D01", name="Operations")
+    GLAccount.objects.create(
+        account_number="5010", name="Freight", account_type="expense"
+    )
+    historical = Invoice.objects.create(
+        invoice_id="AP-00099",
+        vendor=vendor,
+        vendor_invoice_number="INV-OLD",
+        invoice_date="2026-08-01",
+        currency="CAD",
+        subtotal="100.00",
+        gst_hst_amount="5.00",
+        total="105.00",
+        status="PAID",
+    )
+    InvoiceLine.objects.create(
+        invoice=historical,
+        line_no=1,
+        description="Freight services Toronto",
+        gl_account_id="5010",
+        department=dept,
+    )
+
+    invoice = Invoice.objects.create(
+        invoice_id="AP-00001",
+        vendor=vendor,
+        vendor_invoice_number="INV-NEW",
+        invoice_date="2026-09-01",
+        currency="CAD",
+        subtotal="100.00",
+        gst_hst_amount="5.00",
+        total="105.00",
+        status="DRAFT",
+    )
+    InvoiceLine.objects.create(
+        invoice=invoice,
+        line_no=1,
+        description="Freight services Toronto",
+        amount="100.00",
+    )
+
+    response = client.post(f"/api/invoices/{invoice.invoice_id}/analyze/")
+
+    assert response.status_code == 200
+    suggestions = response.data["coding_suggestions"]
+    assert len(suggestions) == 1
+    assert suggestions[0]["line_no"] == 1
+    assert suggestions[0]["suggested_gl_account"] == "5010"
+    assert suggestions[0]["suggested_department_id"] == "D01"
+    assert "historical" in suggestions[0]["reason"].lower()
+
+
+@pytest.mark.django_db
+def test_analyze_does_not_use_invoice_as_its_own_coding_history(client, vendor):
+    dept = Department.objects.create(department_id="D01", name="Operations")
+    GLAccount.objects.create(
+        account_number="5010", name="Freight", account_type="expense"
+    )
+    invoice = Invoice.objects.create(
+        invoice_id="AP-00001",
+        vendor=vendor,
+        vendor_invoice_number="INV-SELF",
+        invoice_date="2026-09-01",
+        currency="CAD",
+        subtotal="100.00",
+        gst_hst_amount="5.00",
+        total="105.00",
+        status="DRAFT",
+    )
+    InvoiceLine.objects.create(
+        invoice=invoice,
+        line_no=1,
+        description="Unique self-referential freight line",
+        gl_account_id="5010",
+        department=dept,
+    )
+
+    with mock.patch(
+        "automation.coding.OpenAI", side_effect=RuntimeError("no key")
+    ):
+        response = client.post(f"/api/invoices/{invoice.invoice_id}/analyze/")
+
+    assert response.status_code == 200
+    suggestions = response.data["coding_suggestions"]
+    assert len(suggestions) == 1
+    assert suggestions[0]["suggested_gl_account"] is None
+
+
 # --- Patch ------------------------------------------------------------------
 
 
