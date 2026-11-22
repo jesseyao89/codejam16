@@ -58,6 +58,29 @@ The AI coding step degrades gracefully: a provider error (missing key, timeout,
 malformed JSON) yields `coding_suggestions: []` and never crashes analysis.
 Deterministic validation/matching findings are unaffected.
 
+## Frontend alignment (Nov 2026)
+
+Answers to the frontend team's integration questions; encoded in
+`docs/API_CONTRACT.md` §0.1 and the sections cited there.
+
+- **Auth (1A).** Every seeded user shares one fake demo password (`demo1234`);
+  the username is the dataset `user_id`. The list is in `docs/DEMO_USERS.md`.
+  Login is `POST /api/auth/login/` and returns a DRF token. No signup and no
+  role-switcher endpoint.
+- **Intake (2A).** Upload/ingest always creates a reviewable `DRAFT`.
+  Extraction failure, a corrupt file, or an unknown vendor becomes a `BLOCK`
+  finding (`EXTRACTION_FAILED`, `EXTRACTION_UNREADABLE`, `VENDOR_UNKNOWN`) —
+  never an error and never invented data.
+- **Routing (3A).** `submit` validates and routes atomically to
+  `PENDING_APPROVAL`; the chain (with a `reason` per step) is returned on the
+  invoice as `approvals`. There is no separate routing endpoint.
+- **Payments (4A).** `release` is the explicit human release and the simulated
+  execution in one transaction, setting Payment and Invoice `PAID`. `RELEASED`
+  is not a resting state.
+- **Findings (5B).** Findings carry a deterministic `finding_id` and a
+  `resolution` object; `resolve-finding` targets `finding_id`; `validation_status`
+  counts open findings only; a `BLOCK` is never resolvable.
+
 ## Known limitations / next steps
 
 - Extraction is **text-PDF only** (no OCR, no proven French/scan support) and
