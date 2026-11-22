@@ -22,6 +22,8 @@ class GLAccountSerializer(serializers.ModelSerializer):
 
 
 class TaxCodeSerializer(serializers.ModelSerializer):
+    rate = serializers.SerializerMethodField()
+
     class Meta:
         model = TaxCode
         fields = [
@@ -32,3 +34,13 @@ class TaxCodeSerializer(serializers.ModelSerializer):
             "recoverable",
             "gl_account",
         ]
+
+    def get_rate(self, obj: TaxCode) -> str | None:
+        """Serialise a rate without the model's trailing zeros.
+
+        The DB column is ``decimal_places=5``, so a plain ``DecimalField``
+        renders "0.05000"/"0.00000". The contract uses "0.05"/"0".
+        """
+        if obj.rate is None:
+            return None
+        return format(obj.rate.normalize(), "f")

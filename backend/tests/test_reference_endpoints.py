@@ -190,6 +190,18 @@ def test_pagination_defaults_to_25_and_caps_page_size_at_100(authenticated_clien
 
 
 @pytest.mark.django_db
+def test_tax_code_rates_are_normalized(authenticated_client):
+    TaxCode.objects.create(code="GST5", description="GST 5%", rate="0.05000")
+    TaxCode.objects.create(code="EXEMPT", description="Exempt", rate="0.00000")
+
+    response = authenticated_client.get("/api/tax-codes/")
+
+    rates = {row["code"]: row["rate"] for row in response.data["results"]}
+    assert rates["GST5"] == "0.05"
+    assert rates["EXEMPT"] == "0"
+
+
+@pytest.mark.django_db
 def test_reference_endpoints_require_authentication():
     response = APIClient().get("/api/departments/")
 
