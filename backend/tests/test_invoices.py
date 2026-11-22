@@ -292,7 +292,11 @@ def test_submit_creates_approval_chain(client, ap_clerk):
         requester=ap_clerk,
         department=dept,
         vendor=vendor,
+        currency="CAD",
+        subtotal="100.00",
+        gst_hst_amount="5.00",
         total="105.00",
+        total_cad="105.00",
     )
 
     response = client.post(f"/api/invoices/{invoice.invoice_id}/submit/")

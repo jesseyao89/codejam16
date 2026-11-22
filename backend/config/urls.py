@@ -22,6 +22,7 @@ urlpatterns = [
     path('api/auth/', include('apps.accounts.urls')),
     path('api/', include('apps.invoices.urls')),
     path('api/approvals/', include('apps.approvals.urls')),
+    path('api/policies/', include('apps.approvals.policy_urls')),
     path('api/payments/', include('apps.payments.urls')),
     path('api/inbox/', include('apps.inbox.urls')),
     path('api/audit/', include('apps.audit.urls')),

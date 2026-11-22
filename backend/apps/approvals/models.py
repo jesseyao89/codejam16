@@ -14,6 +14,13 @@ class ApprovalPolicy(models.Model):
     required = models.CharField(max_length=255, blank=True, default="")
     notes = models.CharField(max_length=255, blank=True, default="")
 
+    # Structured, machine-executable policy (see docs/API_CONTRACT.md §7.2).
+    name = models.CharField(max_length=100, blank=True, default="")
+    priority = models.IntegerField(default=100)
+    active = models.BooleanField(default=False, db_index=True)
+    conditions = models.JSONField(default=dict, blank=True)
+    steps = models.JSONField(default=list, blank=True)
+
     def __str__(self) -> str:
         return f"{self.rule_id} ({self.rule_type})"
 
@@ -50,6 +57,7 @@ class ApprovalStep(models.Model):
     action = models.CharField(max_length=16, choices=Action.choices)
     acted_at = models.DateTimeField(null=True, blank=True)
     comment = models.CharField(max_length=255, blank=True, default="")
+    reason = models.CharField(max_length=255, blank=True, default="")
 
     class Meta:
         ordering = ("invoice", "step_no")
