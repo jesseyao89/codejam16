@@ -15,11 +15,20 @@ import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome'
 import EmailIcon from '@mui/icons-material/Email'
 import AttachFileIcon from '@mui/icons-material/AttachFile'
 
+interface InboxEmail {
+  email_id: string
+  from_name: string
+  from_address: string
+  subject: string
+  body: string
+  attachments: string[]
+}
+
 export default function EmailAssistant() {
   const [scanning, setScanning] = useState(false)
   const [scanComplete, setScanComplete] = useState(false)
-  const [emails, setEmails] = useState<any[]>([])
-  const [selectedEmail, setSelectedEmail] = useState<any>(null)
+  const [emails, setEmails] = useState<InboxEmail[]>([])
+  const [selectedEmail, setSelectedEmail] = useState<InboxEmail | null>(null)
   const invoiceEmails = emails.filter((email) =>
   email.attachments.some((file: string) =>
     /\.(pdf|png|jpg|jpeg)$/i.test(file)

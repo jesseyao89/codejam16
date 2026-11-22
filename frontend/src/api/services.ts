@@ -6,12 +6,49 @@ import { api, type PaginatedResponse } from './client'
 // TYPES
 // -------------------------------------
 
+export type UserRole =
+  | 'EMPLOYEE'
+  | 'AP_CLERK'
+  | 'APPROVER'
+  | 'FINANCE_MANAGER'
+  | 'CONTROLLER'
+  | 'AUDITOR'
+
+export type ValidationStatus = 'PASSED' | 'WARNING' | 'BLOCKED'
+
+export type ApprovalStatus = 'PENDING' | 'APPROVED' | 'REJECTED'
+
+// Canonical payment states (contract §1.3). The read API normalizes the
+// dataset's historical statuses to these values.
+export type PaymentStatus =
+  | 'PREPARED'
+  | 'SCHEDULED'
+  | 'RELEASED'
+  | 'PAID'
+  | 'FAILED'
+  | 'CANCELLED'
+
+export interface Department {
+  id: string
+  name: string
+  cost_centre?: string
+  annual_budget_cad?: string | null
+  manager_id?: string | null
+}
+
 export interface User {
   id: string
   username: string
   full_name: string
-  role: string
+  role: UserRole
   email: string
+  title?: string
+  department?: Department | null
+  manager_id?: string | null
+  delegate_id?: string | null
+  approval_limit_cad?: string | null
+  work_province?: string
+  status?: string
 }
 
 export interface Vendor {
@@ -34,53 +71,186 @@ export interface Finding {
   } | null
 }
 
-export interface Invoice {
+export interface ApprovalApprover {
   id: string
-  status: string
-  vendor: Vendor | null
-  invoice_number: string | null
-  invoice_date: string | null
-  due_date: string | null
-  currency: string | null
-  total: string | null
-  total_cad: string | null
-  validation_status: 'PASSED' | 'WARNING' | 'BLOCKED'
-  findings: Finding[]
-  approvals: Approval[]
+  full_name: string
+  role: string
 }
 
 export interface Approval {
   id: string
   invoice_id: string
   step_no: number
-  status: string
-  approver: {
-    id: string
-    full_name: string
-    role: string
-  }
+  status: ApprovalStatus
+  approver: ApprovalApprover | null
+  delegated_for_id: string | null
+  comment: string | null
   reason: string
+  acted_at: string | null
+}
+
+export interface TaxLine {
+  tax_code: string
+  rate?: string
+  amount: string
+}
+
+export interface InvoiceLine {
+  line_no: number
+  description: string
+  quantity: string
+  unit_price: string
+  amount: string
+  gl_account: string
+  department_id: string
+  gst_hst_code?: string
+  pst_qst_code?: string
+  line_type?: string
+}
+
+export interface CodingSuggestion {
+  line_no: number
+  suggested_gl_account: string
+  suggested_department_id: string
+  confidence: string
+  reason: string
+}
+
+export interface Invoice {
+  id: string
+  status: string
+  vendor: Vendor | null
+  invoice_number: string | null
+  invoice_date: string | null
+  received_date?: string | null
+  due_date: string | null
+  currency: string | null
+  subtotal?: string | null
+  tax_lines?: TaxLine[]
+  total: string | null
+  fx_rate_to_cad?: string | null
+  fx_rate_date?: string | null
+  total_cad: string | null
+  ship_to_province?: string | null
+  department?: Department | null
+  requester_id?: string | null
+  po_id?: string | null
+  contract_id?: string | null
+  lines?: InvoiceLine[]
+  validation_status: ValidationStatus | null
+  findings: Finding[]
+  coding_suggestions?: CodingSuggestion[]
+  approvals: Approval[]
+  created_at?: string | null
+  updated_at?: string | null
 }
 
 export interface Payment {
   id: string
-  invoice_id: string
-  status: string
-  amount: string
-  currency: string
+  invoice_id: string | null
+  status: PaymentStatus
+  method: string | null
+  currency: string | null
+  amount: string | null
+  fx_rate_to_cad: string | null
+  amount_cad: string | null
+  discount_taken: string | null
+  reference: string | null
+  scheduled_date: string | null
+  paid_date: string | null
+  bank_account_masked: string | null
+  prepared_by_id: string | null
+  released_by_id: string | null
+  failure_reason: string | null
+  created_at: string | null
 }
 
 export interface DashboardSummary {
   role: string
   counts: {
-    pending_my_approval: number
+    my_submissions: number
     in_review: number
+    pending_my_approval: number
     payments_due: number
     open_findings: number
+    vendors_pending_review: number
   }
   pending_approvals: Approval[]
   payments_due: Payment[]
   recent_activity: unknown[]
+}
+
+// -------------------------------------
+// QUERY HELPERS
+// -------------------------------------
+
+export interface PageParams {
+  page?: number
+  page_size?: number
+}
+
+export interface ApprovalListParams extends PageParams {
+  invoice_id?: string
+  status?: ApprovalStatus
+  mine?: boolean
+  actionable?: boolean
+}
+
+export interface PaymentListParams extends PageParams {
+  status?: string
+  invoice_id?: string
+}
+
+export interface InvoiceListParams extends PageParams {
+  status?: string
+  validation_status?: string
+  vendor_id?: string
+  department_id?: string
+  requester_id?: string
+  q?: string
+}
+
+function buildQuery(params: object = {}): string {
+  const search = new URLSearchParams()
+
+  for (const [key, value] of Object.entries(params)) {
+    if (value === undefined || value === null || value === '') continue
+    search.set(key, String(value))
+  }
+
+  const query = search.toString()
+  return query ? `?${query}` : ''
+}
+
+const ALL_PAGES_SIZE = 100
+const MAX_PAGES = 20
+
+/**
+ * Follow the pagination envelope until every row is loaded (or a safety cap is
+ * hit). The demo dataset has a few hundred rows per list; at 100x volume these
+ * screens should move the filters to the server and page on demand.
+ */
+async function fetchAllPages<T>(
+  fetchPage: (page: number) => Promise<PaginatedResponse<T>>
+): Promise<PaginatedResponse<T>> {
+  const first = await fetchPage(1)
+  const results = [...first.results]
+  let page = 1
+
+  while (results.length < first.count && page < MAX_PAGES) {
+    page += 1
+    const next = await fetchPage(page)
+
+    if (next.results.length === 0) break
+    results.push(...next.results)
+  }
+
+  return {
+    count: first.count,
+    next: null,
+    previous: null,
+    results,
+  }
 }
 
 // -------------------------------------
@@ -89,16 +259,14 @@ export interface DashboardSummary {
 
 export const authService = {
   login: (username: string, password: string) =>
-    api.post<{ token: string; user: User }>(
-      '/auth/login/',
-      { username, password }
-    ),
+    api.post<{ token: string; user: User }>('/auth/login/', {
+      username,
+      password,
+    }),
 
-  me: () =>
-    api.get<User>('/auth/me/'),
+  me: () => api.get<User>('/auth/me/'),
 
-  logout: () =>
-    api.post<void>('/auth/logout/'),
+  logout: () => api.post<void>('/auth/logout/'),
 }
 
 // -------------------------------------
@@ -106,30 +274,26 @@ export const authService = {
 // -------------------------------------
 
 export const invoiceService = {
-  list: () =>
-    api.get<PaginatedResponse<Invoice>>('/invoices/'),
+  list: (params: InvoiceListParams = {}) =>
+    api.get<PaginatedResponse<Invoice>>(`/invoices/${buildQuery(params)}`),
+
+  listAll: (params: InvoiceListParams = {}) =>
+    fetchAllPages((page) =>
+      invoiceService.list({ ...params, page, page_size: ALL_PAGES_SIZE })
+    ),
 
   get: (id: string) =>
     api.get<Invoice>(`/invoices/${encodeURIComponent(id)}/`),
 
-  upload: (file: File) =>
-    api.upload<Invoice>('/invoices/upload/', file),
+  upload: (file: File) => api.upload<Invoice>('/invoices/upload/', file),
 
   analyze: (id: string) =>
-    api.post<unknown>(
-      `/invoices/${encodeURIComponent(id)}/analyze/`
-    ),
+    api.post<unknown>(`/invoices/${encodeURIComponent(id)}/analyze/`),
 
   submit: (id: string) =>
-    api.post<Invoice>(
-      `/invoices/${encodeURIComponent(id)}/submit/`
-    ),
+    api.post<Invoice>(`/invoices/${encodeURIComponent(id)}/submit/`),
 
-  resolveFinding: (
-    id: string,
-    findingId: string,
-    justification: string
-  ) =>
+  resolveFinding: (id: string, findingId: string, justification: string) =>
     api.post<Invoice>(
       `/invoices/${encodeURIComponent(id)}/resolve-finding/`,
       {
@@ -144,20 +308,26 @@ export const invoiceService = {
 // -------------------------------------
 
 export const approvalService = {
-  list: () =>
-    api.get<PaginatedResponse<Approval>>('/approvals/'),
+  list: (params: ApprovalListParams = {}) =>
+    api.get<PaginatedResponse<Approval>>(`/approvals/${buildQuery(params)}`),
+
+  listAll: (params: ApprovalListParams = {}) =>
+    fetchAllPages((page) =>
+      approvalService.list({ ...params, page, page_size: ALL_PAGES_SIZE })
+    ),
+
+  get: (id: string) =>
+    api.get<Approval>(`/approvals/${encodeURIComponent(id)}/`),
 
   approve: (id: string, comment: string) =>
-    api.post<Invoice>(
-      `/approvals/${encodeURIComponent(id)}/approve/`,
-      { comment }
-    ),
+    api.post<Invoice>(`/approvals/${encodeURIComponent(id)}/approve/`, {
+      comment,
+    }),
 
   reject: (id: string, comment: string) =>
-    api.post<Invoice>(
-      `/approvals/${encodeURIComponent(id)}/reject/`,
-      { comment }
-    ),
+    api.post<Invoice>(`/approvals/${encodeURIComponent(id)}/reject/`, {
+      comment,
+    }),
 }
 
 // -------------------------------------
@@ -165,8 +335,16 @@ export const approvalService = {
 // -------------------------------------
 
 export const paymentService = {
-  list: () =>
-    api.get<PaginatedResponse<Payment>>('/payments/'),
+  list: (params: PaymentListParams = {}) =>
+    api.get<PaginatedResponse<Payment>>(`/payments/${buildQuery(params)}`),
+
+  listAll: (params: PaymentListParams = {}) =>
+    fetchAllPages((page) =>
+      paymentService.list({ ...params, page, page_size: ALL_PAGES_SIZE })
+    ),
+
+  get: (id: string) =>
+    api.get<Payment>(`/payments/${encodeURIComponent(id)}/`),
 
   prepare: (invoiceId: string) =>
     api.post<Payment>('/payments/prepare/', {
@@ -174,9 +352,10 @@ export const paymentService = {
     }),
 
   release: (id: string) =>
-    api.post<Payment>(
-      `/payments/${encodeURIComponent(id)}/release/`
-    ),
+    api.post<Payment>(`/payments/${encodeURIComponent(id)}/release/`),
+
+  cancel: (id: string) =>
+    api.post<Payment>(`/payments/${encodeURIComponent(id)}/cancel/`),
 }
 
 // -------------------------------------
@@ -184,6 +363,5 @@ export const paymentService = {
 // -------------------------------------
 
 export const dashboardService = {
-  get: () =>
-    api.get<DashboardSummary>('/dashboard/'),
+  get: () => api.get<DashboardSummary>('/dashboard/'),
 }

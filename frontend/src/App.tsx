@@ -761,10 +761,10 @@ function App() {
                           <TableCell>
                             <Chip
                               label={formatStatus(
-                                invoice.validation_status
+                                invoice.validation_status ?? 'Not analyzed'
                               )}
                               color={getStatusColor(
-                                invoice.validation_status
+                                invoice.validation_status ?? 'NOT_ANALYZED'
                               )}
                               size="small"
                               variant="outlined"
@@ -792,10 +792,14 @@ function App() {
 
           {/* OTHER PAGES */}
 
-          {currentPage === 'Approvals' && <Approvals />}
+          {currentPage === 'Approvals' && (
+            <Approvals user={user} onDataChanged={refreshData} />
+          )}
           {currentPage === 'AI Review' && <AIReview />}
           {currentPage === 'AI Email Assistant' && <EmailAssistant />}
-          {currentPage === 'Payments' && <Payments />}
+          {currentPage === 'Payments' && (
+            <Payments user={user} onDataChanged={refreshData} />
+          )}
           {currentPage === 'Settings' && <Settings />}
 
           {/* INVOICE DETAILS */}
