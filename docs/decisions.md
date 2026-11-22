@@ -54,9 +54,27 @@ are upper-cased into the canonical workflow statuses (`APPROVED`, `PAID`,
 { "validation_status": "PASSED|WARNING|BLOCKED", "findings": [], "coding_suggestions": [], "extraction": {} }
 ```
 
-The AI coding step degrades gracefully: a provider error (missing key, timeout,
-malformed JSON) yields `coding_suggestions: []` and never crashes analysis.
-Deterministic validation/matching findings are unaffected.
+The coding step is **per-line** (contract §5.1). It matches the vendor's
+historical lines first (deterministic, with support count and a reason), then
+falls back to one batched provider call for unmatched lines. History is scoped
+to the invoice's vendor and excludes the invoice being analyzed; line
+descriptions are treated as untrusted document data, and every suggested GL
+account and department is validated against the supplied masters. Unmatched or
+blank lines return an explicit null suggestion asking for manual review, never
+an invented account. A provider error (missing key, timeout, malformed JSON)
+preserves historical suggestions and leaves the rest null; analysis never
+crashes.
+
+Extraction reads text PDFs directly and renders text-poor PDF pages, PNGs and
+JPEGs for a vision-capable model. It supports English and French, normalizes
+dates/amounts, drops unknown fields, preserves extracted tax lines and
+PO/contract references in `raw_extraction`, and treats document content as
+untrusted data. Unreadable/corrupt/password-protected files raise
+`EXTRACTION_UNREADABLE`; provider, timeout, malformed-JSON or unusable-output
+failures raise `EXTRACTION_FAILED`. Both become reviewable blocked drafts.
+Model, timeout, page and image limits are configured by `EXTRACTION_MODEL`,
+`EXTRACTION_TIMEOUT_SECONDS`, `EXTRACTION_MAX_PAGES`, `EXTRACTION_RENDER_DPI`
+and `EXTRACTION_MAX_IMAGE_BYTES`.
 
 ## Frontend alignment (Nov 2026)
 
@@ -81,17 +99,178 @@ Answers to the frontend team's integration questions; encoded in
   `resolution` object; `resolve-finding` targets `finding_id`; `validation_status`
   counts open findings only; a `BLOCK` is never resolvable.
 
+## Frontend API-mismatch fixes (Nov 2026)
+
+The frontend surfaced six read-API mismatches. Resolutions:
+
+1. **Payment status normalization.** The serializer maps historical dataset
+   values: `settled → PAID`, `scheduled → SCHEDULED`, `outstanding → SCHEDULED`;
+   new rows already use canonical values.
+2. **`Invoice.validation_status`.** Historical rows (never analyzed) serialize
+   the empty string as `null`.
+3. **`Approval.comment`.** An undecided step's empty comment serializes as
+   `null`.
+4. **Approvals `mine` / `actionable`.** `mine=true` means assigned-to-me
+   regardless of status; the new `actionable=true` returns assigned-to-me,
+   `status=PENDING`, on a `PENDING_APPROVAL` invoice.
+5. **FX / `total_cad` on upload.** CAD invoices now set `total_cad = total` and
+   `fx_rate_to_cad = 1.0`; USD invoices use the invoice-date `FXRate` when
+   available (otherwise the values stay null).
+6. **Release on a paid invoice.** `release` now refuses
+   (`409 INVALID_STATE_TRANSITION`) when the linked invoice is already `PAID`,
+   covering historical `scheduled` payments.
+
+Contract updates applied to `docs/API_CONTRACT.md`: §7 filter list (`actionable`,
+plus `mine` vs `actionable` semantics), §8 release refusal when the invoice is
+already `PAID`, and §13 normalization mappings.
+
+## Inbox (Nov 2026)
+
+- **Email metadata is stored; attachment files are not.** `Email` +
+  `EmailAttachment` mirror the inbox source (`inbox/emails.json` in dev); files
+  stay on disk. The DB holds classification/status/links so the API can list,
+  filter, ingest, dismiss and audit.
+- **The attachment is the ingestion unit.** One draft per attachment (the brief
+  says "each email attachment"), so an email with two invoice PDFs produces two
+  drafts. `EmailAttachment.invoice` + status carry the links; a single
+  `Email.invoice` was insufficient (EM-029 has invoices 279 and 281).
+- **Classification is deterministic.** Filename/subject/body heuristics classify
+  emails as INVOICE / NOT_INVOICE / UNCERTAIN; non-invoices and no-attachment
+  emails are ROUTED and never drafted. AI classification can layer on later.
+- **Sync vs ingest.** `sync` reloads/classifies and auto-ingests invoice emails;
+  `ingest` handles one email (all attachments, or one by filename) and is
+  idempotent per attachment. `manage.py sync_inbox` runs the same service from
+  the CLI for demo seeding (synchronous; calls the AI extractor).
+- **Failures are reviewable.** Missing/unreadable attachments produce a draft
+  with `EXTRACTION_UNREADABLE`; extraction failures produce `EXTRACTION_FAILED`.
+  PNG scans currently fail text extraction and land as blocked drafts (OCR is a
+  later hardening item).
+
+## Vendor writes (Nov 2026)
+
+- **Onboarding + lifecycle.** `POST /api/vendors/` creates `pending_review` with
+  a generated `V###` id; approve/hold/unhold are Finance/Controller actions.
+  Invoices for non-active vendors get a `VENDOR_ON_HOLD` BLOCK.
+- **Bank details are a controlled action.** `PATCH` cannot touch bank fields
+  (400). A request creates a `PENDING` `BankChange` (the full new account is
+  stored but never serialized; only last4 is exposed). Approval applies it to
+  the vendor and sets `verified_by_callback="yes"`; rejection leaves the vendor
+  unchanged.
+- **Separation of duties.** The requester cannot approve/reject their own bank
+  change.
+- **Historical rows.** Dataset bank changes keep `status`/`decided_*` null (they
+  predate the workflow); new changes use PENDING/APPROVED/REJECTED.
+- **One pending change at a time.** A second request while one is pending is
+  `409`; decisions lock the change and the vendor. A rejected change clears the
+  stored account and is excluded from `UNVERIFIED_BANK_CHANGE` (it was never
+  applied).
+- **Status handling.** Vendor statuses from the dataset are case/format
+  normalised (`Active` → `active`, `on-hold` → `on_hold`); unknown values default
+  to `pending_review` and are logged. `hold` is only valid from `active`;
+  `on_leave` users can read but not write.
+- **PATCH validation.** Vendor input is validated through a serializer (shape
+  only): blank `legal_name`, invalid types, and unknown fields are `400`; bank
+  fields are never accepted here.
+- **Audit.** `VENDOR_ONBOARDED/UPDATED/APPROVED/HELD/UNHELD` and
+  `BANK_CHANGE_REQUESTED/APPROVED/REJECTED`.
+
+## Approval policies (Nov 2026)
+
+- **Structured, bounded conditions.** Policies are editable data (`/api/policies/`)
+  with a flat whitelisted `{field, op, value}` list (`match: all|any`), not
+  arbitrary expressions. This covers amount tiers, vendor status/category,
+  currency, province, PO/contract presence, credit notes and requester fields
+  while staying deterministic and testable.
+- **Seeding.** `seed_policies` creates P01–P06 structured defaults by fixed ID
+  (`get_or_create`; never overwrites edits). The dataset's prose rows stay
+  inactive reference. `payment_release` and `match` rows remain handled in
+  payments and validation, not the approval engine.
+- **Engine.** Additive merge of matching policies by priority, dedupe by
+  `(role, approver)`, invariant manager step + finance above the manager's
+  limit, self-approval escalation, baseline fallback. `ApprovalStep.reason`
+  records the policy that produced each step.
+- **Partial updates.** A `PATCH` that omits `conditions`/`steps` leaves them
+  untouched; only an explicit `null` conditions value means "no conditions".
+- **Manager resolution.** Terminated managers, and on-leave managers without an
+  active delegate, escalate up the management chain; on-leave managers with a
+  delegate stay on the step and the delegate acts. Only approver-capable roles
+  (`APPROVER`, `FINANCE_MANAGER`, `CONTROLLER`) are assigned. Escalated
+  approvers and active delegates can see and act on invoices outside their own
+  department; unrelated cross-department invoices stay hidden.
+- **Actions require an active principal.** `status=on_leave`/`terminated` or
+  `is_active=False` users cannot approve directly, even for a step assigned to
+  them — the delegate acts and the step records `delegated_for`.
+- **Malformed policies fail closed.** Stored policies with a non-object
+  `conditions`/malformed `rules` never match, rather than becoming
+  unconditional.
+- **Definitions.** `new_vendor` = `pending_review` or onboarded within 90 days;
+  `legal_invoice` = vendor category `Legal` (per `approval_policies.csv`, not GL).
+- **Controller routing.** P03/P04 add `CONTROLLER` steps for large amounts; this
+  supersedes the earlier "Controller is not a routing target" note. Separation of
+  duties still blocks approving your own request or releasing your own approval.
+- **CFO.** P04's `cfo` maps to `CONTROLLER` (the six-role model has no CFO).
+
+### Policy engine known limitations
+
+- A department with no resolvable approver (no manager chain) still creates an
+  unassigned `APPROVER` step; a large invoice there is not automatically
+  escalated to finance unless the amount is missing CAD or the vendor is not
+  active. The sample data always resolves a manager.
+- Generated `rule_id`s use 8 hex characters; a collision would fail the create
+  (no retry loop), which is acceptable at demo scale.
+- Merging many policies can exceed the per-policy 10-step cap; the engine does
+  not cap the merged chain.
+- Each submit evaluates policies and resolves approvers with a handful of
+  queries (`lines` existence, per-step user lookups); fine at 50 invoices/month
+  and small at 100x, but worth caching if submit is ever batched.
+
+## Validation and matching (Nov 2026)
+
+- **Tax.** `automation/tax.py` computes expected tax from the tax-code master
+  and place of supply. ON uses HST; BC adds PST only to `goods` line types; QC
+  adds QST; other Canadian provinces use GST; US/foreign and insurance vendors
+  expect no Canadian tax. Wrong/missing tax and province-inapplicable codes are
+  `BLOCK`; missing province or tax-code master is `WARNING`.
+- **PO/contract resolution.** Extracted `po_number`/`contract_reference` are
+  resolved by exact/normalized ID before validation. Unresolved references are
+  `BLOCK`; a `requires_po` vendor with no PO is `WARNING`.
+- **Cumulative limits.** PO spend and contract monthly caps sum historical
+  invoices on the same record, excluding the invoice being analyzed. Exceeding a
+  cap is `BLOCK`; rate-card lines above the hourly cap are `WARNING`.
+- **Card reuse.** A historical card-paid invoice with the same vendor, amount
+  and currency within 90 days produces `CARD_INVOICE` (`WARNING`) even when the
+  invoice number differs.
+- **Finding codes** are stable; messages explain expected/actual amounts and
+  reference IDs in `evidence`.
+
 ## Known limitations / next steps
 
-- Extraction is **text-PDF only** (no OCR, no proven French/scan support) and
-  uses a hardcoded model name; these are tracked as discrepancies vs. AGENTS.md §9.
-- Smart coding is **per-invoice**, not per-line, and suggests no department.
+- Extraction supports text PDFs plus scanned PDF pages and PNG/JPEG uploads via
+  a vision-capable model, including French. It depends on a configured provider
+  and caps rendering at 5 pages / 12 MB by default. PO/contract references are
+  captured but not yet resolved to master records.
+- Coding is **history-first with an AI fallback**: lines with no similar
+  historical coding return a null suggestion for manual review. Token overlap
+  (not semantic embeddings) drives the history match; unusual descriptions may
+  miss a valid precedent. The coding model is configurable via `CODING_MODEL`
+  (falling back to `OPENAI_MODEL`).
 - Duplicate detection covers exact and reformatted numbers (`EXACT_DUPLICATE`,
   `BLOCK`) and near matches by vendor + amount + currency within a 7-day window
   (`POSSIBLE_DUPLICATE`, `WARNING`). Historical references now carry the payment
   method (joined from `Payment` in `build_reference_data`), so duplicate findings
   include `paid_by` (e.g. `CARD`); a standalone "already paid by card" rule
   independent of the amount/date match is still not implemented.
-- Tax validation checks arithmetic only, **not province of delivery**.
-- Vendor resolution is **exact normalized-name match**; fuzzy matching, PO and
-  contract association are not yet extracted by the AI.
+- Tax validation uses the supplied tax-code rates and the **place of supply**:
+  ON HST; BC GST plus PST on goods lines; QC GST plus QST; other Canadian
+  provinces GST; US/foreign and insurance vendors no Canadian tax. HST rates for
+  Atlantic provinces and complex exempt supplies are not modelled beyond the
+  supplied codes.
+- Vendor resolution is **exact normalized-name match**. PO/contract references
+  are resolved by exact/normalized ID; fuzzy reference matching is not yet
+  implemented.
+- PO/contract cumulative checks count historical invoices on the same record;
+  very large histories should eventually be aggregated in SQL rather than
+  scanned per analysis.
+- Inbox has no live mail source: it syncs the dataset JSON. `sync`/`ingest` are
+  synchronous and call the AI extractor per attachment; `manage.py sync_inbox`
+  is the CLI path for pre-demo seeding.

@@ -1,12 +1,13 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 
 import Approvals from './Approvals'
-import AIReview from './AIReview'
+import ValidationReview from './ValidationReview'
 import Payments from './Payments'
 import Settings from './Settings'
 import Login from './Login'
-
-import EmailAssistant from './EmailAssistant'
+import Audit from './Audit'
+import Inbox from './Inbox'
+import Vendors from './Vendors'
 
 import {
   authService,
@@ -18,6 +19,12 @@ import {
 } from './api/services'
 
 import { getToken, clearToken } from './api/client'
+
+import {
+  canReadInbox,
+  canUploadInvoice,
+  canViewAudit,
+} from './auth/permissions'
 
 import {
   Alert,
@@ -45,6 +52,7 @@ import {
   TableCell,
   TableContainer,
   TableHead,
+  TablePagination,
   TableRow,
   TextField,
   ThemeProvider,
@@ -56,11 +64,14 @@ import AddIcon from '@mui/icons-material/Add'
 import DashboardIcon from '@mui/icons-material/Dashboard'
 import ReceiptLongIcon from '@mui/icons-material/ReceiptLong'
 import FactCheckIcon from '@mui/icons-material/FactCheck'
-import SmartToyIcon from '@mui/icons-material/SmartToy'
+import RuleIcon from '@mui/icons-material/Rule'
 import PaymentsIcon from '@mui/icons-material/Payments'
 import SettingsIcon from '@mui/icons-material/Settings'
 import RefreshIcon from '@mui/icons-material/Refresh'
 import LogoutIcon from '@mui/icons-material/Logout'
+import HistoryIcon from '@mui/icons-material/History'
+import InboxIcon from '@mui/icons-material/Inbox'
+import BusinessIcon from '@mui/icons-material/Business'
 
 import InvoiceDetails from './InvoiceDetails'
 import InvoiceUpload from './InvoiceUpload'
@@ -103,13 +114,29 @@ const theme = createTheme({
 // MENU
 // --------------------------------------------------
 
-const menuItems = [
+interface MenuItem {
+  label: string
+  icon: ReactNode
+  visible?: (role: string) => boolean
+}
+
+const menuItems: MenuItem[] = [
   { label: 'Dashboard', icon: <DashboardIcon /> },
   { label: 'Invoices', icon: <ReceiptLongIcon /> },
   { label: 'Approvals', icon: <FactCheckIcon /> },
-  { label: 'AI Review', icon: <SmartToyIcon /> },
-  { label: 'AI Email Assistant', icon: <SmartToyIcon /> },
+  { label: 'Validation Review', icon: <RuleIcon /> },
+  {
+    label: 'AP Inbox',
+    icon: <InboxIcon />,
+    visible: canReadInbox,
+  },
   { label: 'Payments', icon: <PaymentsIcon /> },
+  { label: 'Vendors', icon: <BusinessIcon /> },
+  {
+    label: 'Audit Trail',
+    icon: <HistoryIcon />,
+    visible: canViewAudit,
+  },
   { label: 'Settings', icon: <SettingsIcon /> },
 ]
 
@@ -123,6 +150,18 @@ function formatMoney(
 ): string {
   if (amount === null) return '—'
   return `${currency ?? ''} ${amount}`.trim()
+}
+
+function formatDateTime(value: string | null | undefined): string {
+  if (!value) return '—'
+
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+
+  return date.toLocaleString('en-CA', {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  })
 }
 
 function formatStatus(status: string): string {
@@ -140,14 +179,18 @@ function getStatusColor(
 
     case 'REVIEW':
     case 'PENDING_APPROVAL':
+    case 'PENDING':
     case 'WARNING':
+    case 'SCHEDULED':
       return 'warning'
 
     case 'BLOCKED':
     case 'REJECTED':
+    case 'FAILED':
       return 'error'
 
     case 'DRAFT':
+    case 'PREPARED':
       return 'info'
 
     default:
@@ -221,7 +264,9 @@ function Sidebar({
       <Divider sx={{ borderColor: '#7784A5' }} />
 
       <List sx={{ px: 1 }}>
-        {menuItems.map((item) => (
+        {menuItems
+          .filter((item) => !item.visible || item.visible(user.role))
+          .map((item) => (
           <ListItemButton
             key={item.label}
             selected={item.label === currentPage}
@@ -287,6 +332,8 @@ function App() {
   const [currentPage, setCurrentPage] = useState('Dashboard')
   const [searchQuery, setSearchQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState('All')
+  const [invoicePage, setInvoicePage] = useState(0)
+  const [invoiceRowsPerPage, setInvoiceRowsPerPage] = useState(25)
 
   const [selectedInvoiceId, setSelectedInvoiceId] =
     useState<string | null>(null)
@@ -302,6 +349,7 @@ function App() {
 
   const [apiError, setApiError] = useState('')
   const [dataLoading, setDataLoading] = useState(false)
+  const [dataVersion, setDataVersion] = useState(0)
 
   // CHECK AUTHENTICATION
 
@@ -338,7 +386,7 @@ function App() {
       try {
         const [invoiceResponse, dashboardResponse] =
           await Promise.all([
-            invoiceService.list(),
+            invoiceService.listAll(),
             dashboardService.get(),
           ])
 
@@ -367,12 +415,13 @@ function App() {
     try {
       const [invoiceResponse, dashboardResponse] =
         await Promise.all([
-          invoiceService.list(),
+          invoiceService.listAll(),
           dashboardService.get(),
         ])
 
       setApiInvoices(invoiceResponse.results)
       setDashboard(dashboardResponse)
+      setDataVersion((version) => version + 1)
     } catch (err) {
       setApiError(
         err instanceof Error
@@ -397,6 +446,7 @@ function App() {
       setApiInvoices([])
       setDashboard(null)
       setSelectedInvoiceId(null)
+      setCurrentPage('Dashboard')
     }
   }
 
@@ -420,24 +470,23 @@ function App() {
     return matchesSearch && matchesStatus
   })
 
-  // INVOICE DRAWER
+  const recentInvoices = [...apiInvoices]
+    .sort((left, right) => {
+      const leftDate = left.created_at ?? ''
+      const rightDate = right.created_at ?? ''
 
-  const selectedInvoice =
-    apiInvoices.find(
-      (invoice) => invoice.id === selectedInvoiceId
-    ) ?? null
+      if (leftDate !== rightDate) {
+        return rightDate.localeCompare(leftDate)
+      }
 
-  const drawerInvoice = selectedInvoice
-    ? {
-      id: selectedInvoice.id,
-      vendor: selectedInvoice.vendor?.legal_name ?? 'Unknown Vendor',
-      amount: formatMoney(
-        selectedInvoice.total,
-        selectedInvoice.currency
-      ),
-      status: formatStatus(selectedInvoice.status),
-    }
-    : null
+      return right.id.localeCompare(left.id)
+    })
+    .slice(0, 5)
+
+  const visibleInvoices = filteredInvoices.slice(
+    invoicePage * invoiceRowsPerPage,
+    invoicePage * invoiceRowsPerPage + invoiceRowsPerPage
+  )
 
   // DASHBOARD CARDS
 
@@ -555,7 +604,7 @@ function App() {
                   </Button>
                 )}
 
-              {currentPage === 'Invoices' && (
+              {currentPage === 'Invoices' && canUploadInvoice(user.role) && (
                 <Button
                   variant="contained"
                   startIcon={<AddIcon />}
@@ -579,7 +628,9 @@ function App() {
 
           {/* API ERROR */}
 
-          {apiError && (
+          {(currentPage === 'Dashboard' ||
+            currentPage === 'Invoices') &&
+            apiError && (
             <Alert
               severity="error"
               sx={{ mb: 3 }}
@@ -601,7 +652,9 @@ function App() {
 
           {/* LOADING */}
 
-          {dataLoading && (
+          {(currentPage === 'Dashboard' ||
+            currentPage === 'Invoices') &&
+            dataLoading && (
             <Box sx={{ display: 'flex', gap: 2, mb: 3 }}>
               <CircularProgress size={20} />
               <Typography color="text.secondary">
@@ -637,6 +690,85 @@ function App() {
                 ))}
               </Stack>
 
+              {dashboard && dashboard.payments_due.length > 0 && (
+                <Box sx={{ mb: 4 }}>
+                  <Typography variant="h6" sx={{ mb: 2 }}>
+                    Payments Due
+                  </Typography>
+
+                  <TableContainer component={Card}>
+                    <Table size="small">
+                      <TableHead sx={{ backgroundColor: '#E9EDF5' }}>
+                        <TableRow>
+                          <TableCell>Payment</TableCell>
+                          <TableCell>Invoice</TableCell>
+                          <TableCell>Status</TableCell>
+                          <TableCell align="right">Amount (CAD)</TableCell>
+                          <TableCell>Scheduled</TableCell>
+                        </TableRow>
+                      </TableHead>
+
+                      <TableBody>
+                        {dashboard.payments_due.map((payment) => (
+                          <TableRow key={payment.id} hover>
+                            <TableCell>{payment.id}</TableCell>
+
+                            <TableCell>
+                              {payment.invoice_id && (
+                                <Button
+                                  size="small"
+                                  sx={{
+                                    textTransform: 'none',
+                                    p: 0,
+                                    minWidth: 0,
+                                  }}
+                                  onClick={() =>
+                                    setSelectedInvoiceId(
+                                      payment.invoice_id as string
+                                    )
+                                  }
+                                >
+                                  {payment.invoice_id}
+                                </Button>
+                              )}
+                            </TableCell>
+
+                            <TableCell>
+                              <Chip
+                                size="small"
+                                label={formatStatus(payment.status)}
+                                color={getStatusColor(payment.status)}
+                              />
+                            </TableCell>
+
+                            <TableCell align="right">
+                              {payment.amount_cad
+                                ? `CAD ${payment.amount_cad}`
+                                : '—'}
+                            </TableCell>
+
+                            <TableCell>
+                              {payment.scheduled_date ?? '—'}
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </TableContainer>
+                </Box>
+              )}
+
+              {dashboard &&
+                dashboard.counts.payments_due > 0 &&
+                dashboard.payments_due.length === 0 && (
+                  <Alert severity="info" sx={{ mb: 4 }}>
+                    {dashboard.counts.payments_due} payment
+                    {dashboard.counts.payments_due === 1 ? '' : 's'} are due.
+                    The dashboard payment list is not populated by the API yet;
+                    use the Payments page to review and release them.
+                  </Alert>
+                )}
+
               <Typography variant="h6" sx={{ mb: 2 }}>
                 Recent Invoices
               </Typography>
@@ -656,9 +788,10 @@ function App() {
                 size="small"
                 placeholder="Search invoices by ID, number or vendor..."
                 value={searchQuery}
-                onChange={(event) =>
+                onChange={(event) => {
                   setSearchQuery(event.target.value)
-                }
+                  setInvoicePage(0)
+                }}
                 sx={{ backgroundColor: '#FFFFFF' }}
               />
 
@@ -668,9 +801,10 @@ function App() {
                 <Select
                   label="Status"
                   value={statusFilter}
-                  onChange={(event) =>
+                  onChange={(event) => {
                     setStatusFilter(event.target.value)
-                  }
+                    setInvoicePage(0)
+                  }}
                   sx={{ backgroundColor: '#FFFFFF' }}
                 >
                   <MenuItem value="All">All Statuses</MenuItem>
@@ -715,8 +849,8 @@ function App() {
 
                     <TableBody>
                       {(currentPage === 'Dashboard'
-                        ? apiInvoices.slice(0, 5)
-                        : filteredInvoices
+                        ? recentInvoices
+                        : visibleInvoices
                       ).map((invoice) => (
                         <TableRow
                           key={invoice.id}
@@ -761,10 +895,10 @@ function App() {
                           <TableCell>
                             <Chip
                               label={formatStatus(
-                                invoice.validation_status
+                                invoice.validation_status ?? 'Not analyzed'
                               )}
                               color={getStatusColor(
-                                invoice.validation_status
+                                invoice.validation_status ?? 'NOT_ANALYZED'
                               )}
                               size="small"
                               variant="outlined"
@@ -776,8 +910,28 @@ function App() {
                   </Table>
                 </TableContainer>
 
+                {currentPage === 'Invoices' &&
+                  filteredInvoices.length > 0 && (
+                    <TablePagination
+                      component="div"
+                      count={filteredInvoices.length}
+                      page={invoicePage}
+                      rowsPerPage={invoiceRowsPerPage}
+                      rowsPerPageOptions={[10, 25, 50]}
+                      onPageChange={(_event, newPage) =>
+                        setInvoicePage(newPage)
+                      }
+                      onRowsPerPageChange={(event) => {
+                        setInvoiceRowsPerPage(Number(event.target.value))
+                        setInvoicePage(0)
+                      }}
+                    />
+                  )}
+
                 {!dataLoading &&
-                  filteredInvoices.length === 0 && (
+                  (currentPage === 'Invoices'
+                    ? filteredInvoices.length === 0
+                    : recentInvoices.length === 0) && (
                     <Typography
                       color="text.secondary"
                       sx={{ textAlign: 'center', mt: 3 }}
@@ -790,27 +944,148 @@ function App() {
               </>
             )}
 
+          {/* DASHBOARD RECENT ACTIVITY */}
+
+          {currentPage === 'Dashboard' && (
+            <Box sx={{ mt: 5 }}>
+              <Stack
+                direction="row"
+                sx={{
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  mb: 2,
+                }}
+              >
+                <Typography variant="h6">Recent Activity</Typography>
+
+                {canViewAudit(user.role) && (
+                  <Button
+                    size="small"
+                    onClick={() => setCurrentPage('Audit Trail')}
+                  >
+                    Open audit trail
+                  </Button>
+                )}
+              </Stack>
+
+              {dashboard && dashboard.recent_activity.length > 0 ? (
+                <TableContainer component={Card}>
+                  <Table size="small">
+                    <TableHead sx={{ backgroundColor: '#E9EDF5' }}>
+                      <TableRow>
+                        <TableCell>Timestamp</TableCell>
+                        <TableCell>Actor</TableCell>
+                        <TableCell>Action</TableCell>
+                        <TableCell>Entity</TableCell>
+                      </TableRow>
+                    </TableHead>
+
+                    <TableBody>
+                      {dashboard.recent_activity.map((event) => (
+                        <TableRow key={event.id} hover>
+                          <TableCell sx={{ whiteSpace: 'nowrap' }}>
+                            {formatDateTime(event.timestamp)}
+                          </TableCell>
+
+                          <TableCell>
+                            {event.actor_name ?? event.actor_id ?? '—'}
+                            {event.on_behalf_of_id
+                              ? ` (for ${event.on_behalf_of_id})`
+                              : ''}
+                          </TableCell>
+
+                          <TableCell>{formatStatus(event.action)}</TableCell>
+
+                          <TableCell>
+                            {event.entity_type === 'INVOICE' ? (
+                              <Button
+                                size="small"
+                                sx={{
+                                  textTransform: 'none',
+                                  p: 0,
+                                  minWidth: 0,
+                                }}
+                                onClick={() =>
+                                  setSelectedInvoiceId(event.entity_id)
+                                }
+                              >
+                                {event.entity_type} · {event.entity_id}
+                              </Button>
+                            ) : (
+                              `${event.entity_type} · ${event.entity_id}`
+                            )}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </TableContainer>
+              ) : (
+                <Typography color="text.secondary">
+                  No recent activity recorded for the invoices you can see.
+                </Typography>
+              )}
+            </Box>
+          )}
+
           {/* OTHER PAGES */}
 
-          {currentPage === 'Approvals' && <Approvals />}
-          {currentPage === 'AI Review' && <AIReview />}
-          {currentPage === 'AI Email Assistant' && <EmailAssistant />}
-          {currentPage === 'Payments' && <Payments />}
-          {currentPage === 'Settings' && <Settings />}
+          {currentPage === 'Approvals' && (
+            <Approvals user={user} onDataChanged={refreshData} />
+          )}
+          {currentPage === 'Validation Review' && (
+            <ValidationReview
+              refreshToken={dataVersion}
+              onOpenInvoice={(invoiceId) =>
+                setSelectedInvoiceId(invoiceId)
+              }
+            />
+          )}
+          {currentPage === 'AP Inbox' && (
+            <Inbox
+              user={user}
+              onDataChanged={refreshData}
+              onOpenInvoice={(invoiceId) =>
+                setSelectedInvoiceId(invoiceId)
+              }
+            />
+          )}
+          {currentPage === 'Payments' && (
+            <Payments user={user} onDataChanged={refreshData} />
+          )}
+          {currentPage === 'Vendors' && (
+            <Vendors user={user} onDataChanged={refreshData} />
+          )}
+          {currentPage === 'Audit Trail' && canViewAudit(user.role) && (
+            <Audit
+              user={user}
+              onOpenInvoice={(invoiceId) =>
+                setSelectedInvoiceId(invoiceId)
+              }
+            />
+          )}
+          {currentPage === 'Settings' && <Settings user={user} />}
 
           {/* INVOICE DETAILS */}
 
-          <InvoiceDetails
-            invoice={drawerInvoice}
-            onClose={() => setSelectedInvoiceId(null)}
-          />
+          {selectedInvoiceId && (
+            <InvoiceDetails
+              key={selectedInvoiceId}
+              invoiceId={selectedInvoiceId}
+              user={user}
+              onClose={() => setSelectedInvoiceId(null)}
+              onChanged={refreshData}
+            />
+          )}
 
           {/* UPLOAD DIALOG */}
 
           <InvoiceUpload
             open={uploadOpen}
-            onClose={() => {
+            onClose={() => setUploadOpen(false)}
+            onUploaded={(invoice) => {
               setUploadOpen(false)
+              setSelectedInvoiceId(invoice.id)
               void refreshData()
             }}
           />

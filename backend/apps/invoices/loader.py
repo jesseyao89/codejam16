@@ -9,14 +9,18 @@ than aborting the load, so a bad row never crashes the whole import
 from __future__ import annotations
 
 import csv
+import logging
 from datetime import date, datetime, timezone
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 from django.conf import settings
+from django.contrib.auth.hashers import make_password
+from django.db import transaction
 
 from apps.accounts.models import Department, User
 from apps.approvals.models import ApprovalPolicy, ApprovalStep
+from apps.inbox.loader import load_emails
 from apps.invoices.models import FXRate, GLAccount, Invoice, InvoiceLine, TaxCode
 from apps.payments.models import BankStatement, CardTransaction, Payment
 from apps.vendors.models import BankChange, Contract, PurchaseOrder, Vendor
@@ -83,6 +87,23 @@ ROLE_MAP = {
     "auditor": User.Role.AUDITOR,
 }
 
+VENDOR_STATUS_MAP = {
+    "active": Vendor.Status.ACTIVE,
+    "approved": Vendor.Status.ACTIVE,
+    "verified": Vendor.Status.ACTIVE,
+    "on_hold": Vendor.Status.ON_HOLD,
+    "on hold": Vendor.Status.ON_HOLD,
+    "suspended": Vendor.Status.ON_HOLD,
+    "blocked": Vendor.Status.ON_HOLD,
+    "inactive": Vendor.Status.ON_HOLD,
+    "pending_review": Vendor.Status.PENDING_REVIEW,
+    "pending review": Vendor.Status.PENDING_REVIEW,
+    "pending": Vendor.Status.PENDING_REVIEW,
+    "pending_approval": Vendor.Status.PENDING_REVIEW,
+}
+
+logger = logging.getLogger(__name__)
+
 
 class Loader:
     """Stateful, idempotent loader. Keeps FK caches and an error log."""
@@ -136,6 +157,10 @@ class Loader:
         return self.load("departments", fn)
 
     def load_users(self):
+        # Every seeded user shares the same demo password, so hash it once per
+        # run instead of re-hashing 40 times (PBKDF2 is deliberately slow).
+        demo_hash = make_password(settings.DEMO_PASSWORD)
+
         def fn(row):
             user_id = row["user_id"]
             role = ROLE_MAP.get(row.get("role"))
@@ -147,15 +172,15 @@ class Loader:
             last_name = parts[1] if len(parts) > 1 else ""
             status = _string(row.get("status"), "active")
 
-            user, _ = User.objects.get_or_create(
+            user, created = User.objects.get_or_create(
                 username=user_id,
                 defaults={"user_id": user_id},
             )
             # Demo-only: every seeded user shares the documented fake password
-            # so the synthetic accounts can log in (docs/DEMO_USERS.md, contract
-            # §2.1). Set unconditionally so re-running the loader fixes rows
-            # created before this behaviour existed.
-            user.set_password(settings.DEMO_PASSWORD)
+            # (docs/DEMO_USERS.md, contract §2.1). Set it on create, or to
+            # repair rows that still have an empty/unusable password.
+            if created or not user.password or not user.has_usable_password():
+                user.password = demo_hash
             user.user_id = user_id
             user.email = _string(row.get("email"))
             user.first_name = first_name
@@ -193,6 +218,14 @@ class Loader:
             dep.manager = self.fk(self.users, row.get("manager_user_id"))
             dep.save(update_fields=["manager"])
 
+    def _vendor_status(self, value) -> str:
+        raw = _string(value, "pending_review").strip().lower().replace("-", "_")
+        mapped = VENDOR_STATUS_MAP.get(raw)
+        if mapped is None:
+            logger.warning("Unknown vendor status %r; defaulting to pending_review", value)
+            return Vendor.Status.PENDING_REVIEW
+        return mapped
+
     def load_vendors(self):
         def fn(row):
             vendor = Vendor.objects.update_or_create(
@@ -220,7 +253,7 @@ class Loader:
                     ),
                     "ap_contact_email": _string(row.get("ap_contact_email")),
                     "requires_po": _string(row.get("requires_po")),
-                    "status": _string(row.get("status"), "pending_review"),
+                    "status": self._vendor_status(row.get("status")),
                     "onboarded_at": _date(row.get("onboarded_at")),
                 },
             )[0]
@@ -478,23 +511,27 @@ class Loader:
     # -- orchestration ------------------------------------------------------
 
     def run(self) -> dict[str, int]:
-        counts: dict[str, int] = {}
-        counts["departments"] = self.load_departments()
-        counts["users"] = self.load_users()
-        self.link_users()
-        self.link_departments()
-        counts["vendors"] = self.load_vendors()
-        counts["gl_accounts"] = self.load_gl_accounts()
-        counts["tax_codes"] = self.load_tax_codes()
-        counts["fx_rates"] = self.load_fx_rates()
-        counts["contracts"] = self.load_contracts()
-        counts["purchase_orders"] = self.load_purchase_orders()
-        counts["invoices"] = self.load_invoices()
-        counts["invoice_lines"] = self.load_invoice_lines()
-        counts["approvals"] = self.load_approvals()
-        counts["payments"] = self.load_payments()
-        counts["bank_change_history"] = self.load_bank_changes()
-        counts["approval_policies"] = self.load_approval_policies()
-        counts["bank_statement"] = self.load_bank_statement()
-        counts["card_transactions"] = self.load_card_transactions()
-        return counts
+        # One transaction for the whole load: thousands of per-row autocommits
+        # are the dominant cost on SQLite (AGENTS.md §8).
+        with transaction.atomic():
+            counts: dict[str, int] = {}
+            counts["departments"] = self.load_departments()
+            counts["users"] = self.load_users()
+            self.link_users()
+            self.link_departments()
+            counts["vendors"] = self.load_vendors()
+            counts["gl_accounts"] = self.load_gl_accounts()
+            counts["tax_codes"] = self.load_tax_codes()
+            counts["fx_rates"] = self.load_fx_rates()
+            counts["contracts"] = self.load_contracts()
+            counts["purchase_orders"] = self.load_purchase_orders()
+            counts["invoices"] = self.load_invoices()
+            counts["invoice_lines"] = self.load_invoice_lines()
+            counts["approvals"] = self.load_approvals()
+            counts["payments"] = self.load_payments()
+            counts["bank_change_history"] = self.load_bank_changes()
+            counts["approval_policies"] = self.load_approval_policies()
+            counts["bank_statement"] = self.load_bank_statement()
+            counts["card_transactions"] = self.load_card_transactions()
+            counts["emails"] = load_emails(self.data_dir, self.errors)
+            return counts

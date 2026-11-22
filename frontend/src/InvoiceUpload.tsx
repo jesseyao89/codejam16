@@ -1,7 +1,10 @@
 import { useRef, useState } from 'react'
+
 import {
+  Alert,
   Box,
   Button,
+  CircularProgress,
   Dialog,
   DialogActions,
   DialogContent,
@@ -14,36 +17,75 @@ import CloudUploadIcon from '@mui/icons-material/CloudUpload'
 import InsertDriveFileIcon from '@mui/icons-material/InsertDriveFile'
 import CloseIcon from '@mui/icons-material/Close'
 
+import {
+  invoiceService,
+  type Invoice,
+} from './api/services'
+
+import { describeError, type ErrorPresentation } from './api/errors'
+
 type Props = {
   open: boolean
   onClose: () => void
+  onUploaded: (invoice: Invoice) => void
 }
 
-export default function InvoiceUpload({ open, onClose }: Props) {
+const ALLOWED_TYPES = ['application/pdf', 'image/png', 'image/jpeg']
+
+export default function InvoiceUpload({
+  open,
+  onClose,
+  onUploaded,
+}: Props) {
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const [isDragging, setIsDragging] = useState(false)
+  const [uploading, setUploading] = useState(false)
+  const [error, setError] = useState<ErrorPresentation | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const handleFile = (file: File | undefined) => {
-    if (!file) return
+    if (!file || uploading) return
 
-    const allowedTypes = [
-      'application/pdf',
-      'image/png',
-      'image/jpeg',
-    ]
+    const extensionOk = /\.(pdf|png|jpe?g)$/i.test(file.name)
 
-    if (!allowedTypes.includes(file.type)) {
-      alert('Please upload a PDF, PNG, or JPG file.')
+    if (!ALLOWED_TYPES.includes(file.type) && !extensionOk) {
+      setError({
+        code: 'VALIDATION_ERROR',
+        message: 'Upload a PDF, PNG or JPEG file.',
+        hint: 'Scanned PDFs and phone photos are supported.',
+      })
       return
     }
 
+    setError(null)
     setSelectedFile(file)
   }
 
   const handleClose = () => {
+    if (uploading) return
+
     setSelectedFile(null)
+    setError(null)
+    setIsDragging(false)
     onClose()
+  }
+
+  async function handleUpload() {
+    if (!selectedFile || uploading) return
+
+    setUploading(true)
+    setError(null)
+
+    try {
+      const invoice = await invoiceService.upload(selectedFile)
+
+      setSelectedFile(null)
+      onUploaded(invoice)
+    } catch (err) {
+      setError(describeError(err))
+    } finally {
+      setUploading(false)
+    }
   }
 
   return (
@@ -61,15 +103,32 @@ export default function InvoiceUpload({ open, onClose }: Props) {
         <Typography
           variant="body2"
           color="text.secondary"
-          sx={{ mb: 3 }}
+          sx={{ mb: 2 }}
         >
           Upload an invoice to begin the accounts payable review process.
+          Scanned documents and French invoices are supported. If extraction
+          cannot read the file, a reviewable blocked draft is created instead
+          of guessing fields.
         </Typography>
+
+        {error && (
+          <Alert severity="error" sx={{ mb: 2 }}>
+            <Typography variant="body2" sx={{ fontWeight: 600 }}>
+              {error.code}
+            </Typography>
+
+            <Typography variant="body2">{error.message}</Typography>
+
+            {error.hint && (
+              <Typography variant="caption">{error.hint}</Typography>
+            )}
+          </Alert>
+        )}
 
         <Box
           onDragOver={(event) => {
             event.preventDefault()
-            setIsDragging(true)
+            if (!uploading) setIsDragging(true)
           }}
           onDragLeave={() => setIsDragging(false)}
           onDrop={(event) => {
@@ -77,7 +136,9 @@ export default function InvoiceUpload({ open, onClose }: Props) {
             setIsDragging(false)
             handleFile(event.dataTransfer.files[0])
           }}
-          onClick={() => fileInputRef.current?.click()}
+          onClick={() => {
+            if (!uploading) fileInputRef.current?.click()
+          }}
           sx={{
             border: `2px dashed ${
               isDragging ? '#404D73' : '#B7C0D4'
@@ -85,12 +146,12 @@ export default function InvoiceUpload({ open, onClose }: Props) {
             borderRadius: 3,
             p: 5,
             textAlign: 'center',
-            cursor: 'pointer',
+            cursor: uploading ? 'default' : 'pointer',
             backgroundColor: isDragging ? '#EEF1F7' : '#F8F9FC',
             transition: '0.2s',
             '&:hover': {
-              backgroundColor: '#EEF1F7',
-              borderColor: '#59678F',
+              backgroundColor: uploading ? undefined : '#EEF1F7',
+              borderColor: uploading ? undefined : '#59678F',
             },
           }}
         >
@@ -99,6 +160,7 @@ export default function InvoiceUpload({ open, onClose }: Props) {
             type="file"
             accept=".pdf,.png,.jpg,.jpeg"
             hidden
+            disabled={uploading}
             onChange={(event) => {
               handleFile(event.target.files?.[0])
               event.target.value = ''
@@ -130,7 +192,7 @@ export default function InvoiceUpload({ open, onClose }: Props) {
             color="text.secondary"
             sx={{ display: 'block', mt: 2 }}
           >
-            PDF, PNG, JPG
+            PDF, PNG, JPG · scans and French supported
           </Typography>
         </Box>
 
@@ -168,6 +230,7 @@ export default function InvoiceUpload({ open, onClose }: Props) {
 
             <Button
               onClick={() => setSelectedFile(null)}
+              disabled={uploading}
               sx={{ minWidth: 0, color: '#667085' }}
             >
               <CloseIcon fontSize="small" />
@@ -177,18 +240,25 @@ export default function InvoiceUpload({ open, onClose }: Props) {
       </DialogContent>
 
       <DialogActions sx={{ p: 3 }}>
-        <Button onClick={handleClose} sx={{ color: '#59678F' }}>
+        <Button
+          onClick={handleClose}
+          disabled={uploading}
+          sx={{ color: '#59678F' }}
+        >
           Cancel
         </Button>
 
         <Button
           variant="contained"
-          disabled={!selectedFile}
+          disabled={!selectedFile || uploading}
           onClick={() => {
-            // Backend integration comes next.
-            // Do not mark this invoice as uploaded yet.
-            alert('File selected. Backend upload is not connected yet.')
+            void handleUpload()
           }}
+          startIcon={
+            uploading ? (
+              <CircularProgress size={16} color="inherit" />
+            ) : undefined
+          }
           sx={{
             backgroundColor: '#404D73',
             '&:hover': {
@@ -196,7 +266,7 @@ export default function InvoiceUpload({ open, onClose }: Props) {
             },
           }}
         >
-          Upload Invoice
+          {uploading ? 'Extracting...' : 'Upload Invoice'}
         </Button>
       </DialogActions>
     </Dialog>

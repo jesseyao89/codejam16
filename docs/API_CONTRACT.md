@@ -123,8 +123,10 @@ Severity          BLOCK | WARNING
 ApprovalStatus    PENDING | APPROVED | REJECTED
 PaymentStatus     PREPARED | SCHEDULED | RELEASED | PAID | FAILED | CANCELLED
 VendorStatus      active | on_hold | pending_review
-BankChangeStatus  pending | approved | rejected
+BankChangeStatus  PENDING | APPROVED | REJECTED (null for historical rows)
 EmailClass        INVOICE | NOT_INVOICE | UNCERTAIN
+EmailStatus       NEW | INGESTED | PARTIAL | ROUTED | DISMISSED
+EmailAttachmentStatus NEW | INGESTED | FAILED
 ```
 
 ### 1.4 Shared object shapes
@@ -200,10 +202,10 @@ Legend: ✅ allowed · ❌ forbidden · ⚠️ conditional (see notes) · — no
 | Capability | Employee | AP Clerk | Approver | Finance Mgr | Controller | Auditor |
 |---|---|---|---|---|---|---|
 | Submit / upload invoices | ✅ own dept | ✅ | ✅ own dept | ✅ | ✅ | ❌ |
-| See invoices | own dept | all | own dept | all | all | all (read) |
+| See invoices | own dept | all | own dept + assigned approval steps | all | all | all (read) |
 | Correct coding / review extraction | ❌ | ✅ | ❌ | ✅ | ✅ | ❌ |
 | Resolve `WARNING` findings | ❌ | ✅ | ❌ | ✅ | ✅ | ❌ |
-| Approve / reject | ❌ | ❌ | ⚠️ own dept ≤ limit | ⚠️ above limit / flagged / new vendor | — | ❌ |
+| Approve / reject | ❌ | ❌ | ⚠️ own dept ≤ limit, or assigned step | ⚠️ above limit / flagged / new vendor | ⚠️ large amounts per policy | ❌ |
 | Prepare payment | ❌ | ✅ | ❌ | ✅ | ✅ | ❌ |
 | Release payment | ❌ | ❌ | ❌ | ⚠️ ≤ CAD 100,000 | ✅ any | ❌ |
 | Vendor onboard / approve / hold | ❌ | ❌ | ❌ | ✅ | ✅ | ❌ |
@@ -220,12 +222,15 @@ Universal rules override the table:
   payment (applies to `APPROVER`, `FINANCE_MANAGER` and `CONTROLLER`).
 - Delegated actions are recorded as delegated (`delegated_for_id` /
   `on_behalf_of_id`).
-- Inactive / terminated users cannot act; active delegation is checked on every
-  action.
+- Inactive / terminated users cannot act; on-leave users act only through an
+  active delegate. Delegation is checked on every action.
 - Lists are server-scoped: a role never receives rows it may not see. The UI
   hiding a control is never the enforcement.
-- `CONTROLLER` is not an approval-routing target; policies route to `APPROVER`
-  then `FINANCE_MANAGER`.
+- `CONTROLLER` may be an approval step for large amounts per policy (P03/P04);
+  the separation-of-duties rules still apply.
+- An approver assigned a step (including cross-department escalation) can see
+  that invoice; an active delegate can see the step and its invoice while the
+  principal is on leave. Unrelated cross-department invoices stay hidden.
 
 ## 3. Reference data (departments, GL accounts, tax codes)
 
@@ -283,14 +288,17 @@ FOREIGN   Foreign vendor, no Canadian tax charged
 GET    /api/inbox/                     -> paginated Email
 POST   /api/inbox/sync/                -> { ingested, skipped, routed }
 GET    /api/inbox/{id}/                -> Email
-POST   /api/inbox/{id}/ingest/         -> Invoice      (attachment -> DRAFT bill)
+POST   /api/inbox/{id}/ingest/         -> { email, invoices[] }  (one draft per attachment)
 POST   /api/inbox/{id}/dismiss/        -> 204
 ```
 
 - `sync` reads the AP inbox (dataset `inbox/emails.json` in dev), classifies
-  each email, and creates draft bills for attachment-bearing invoices.
+  each email, and creates **one draft per attachment** for attachment-bearing
+  invoices.
 - Emails that are not invoices, or have no attachment, are classified and NOT
-  turned into bills; they appear in `routed` for review.
+  turned into bills; they are `ROUTED` for review.
+- `ingest` turns the email's attachments into drafts on demand (all by default,
+  or one via `{ "attachment": "<filename>" }`). It is idempotent per attachment.
 - Upload path: `POST /api/invoices/upload/` (multipart `file`) does the same
   for a direct upload.
 
@@ -302,14 +310,27 @@ attachment always produces a reviewable `DRAFT` invoice:
 | Situation | Result |
 |---|---|
 | Extraction succeeds | `DRAFT` with populated `extraction`; `validation_status` from the checks |
-| Extraction fails / times out / malformed model output | `DRAFT`, `extraction` fields `null`, `validation_status: "BLOCKED"`, finding `EXTRACTION_FAILED` |
-| File unreadable or corrupt | `DRAFT`, `validation_status: "BLOCKED"`, finding `EXTRACTION_UNREADABLE`; the original file is kept |
+| Extraction fails / times out / malformed model output / corrupt content | `DRAFT`, `extraction` fields `null`, `validation_status: "BLOCKED"`, finding `EXTRACTION_FAILED` |
+| File missing or unreadable | `DRAFT`, `validation_status: "BLOCKED"`, finding `EXTRACTION_UNREADABLE`; the original file is kept if present |
 | Unknown vendor | `vendor: null`, `validation_status: "BLOCKED"`, finding `VENDOR_UNKNOWN`; the clerk assigns a vendor and re-runs `/analyze/` |
 | File cannot be stored at all | `400 VALIDATION_ERROR`; no invoice is created |
 
-`POST /api/invoices/upload/` and `POST /api/inbox/{id}/ingest/` return `201`
-with the created `Invoice`. Extraction only ever returns `null` for missing
-values; it never guesses a field.
+`POST /api/invoices/upload/` returns `201` with the created `Invoice`.
+`POST /api/inbox/{id}/ingest/` returns `200` with
+`{ "email": Email, "invoices": Invoice[] }` (one draft per attachment).
+Extraction only ever returns `null` for missing values; it never guesses a
+field. It reads text PDFs directly, renders text-poor PDF pages and PNG/JPEG
+attachments for a vision-capable model, and supports English and French
+documents. The normalized extraction also carries `vendor_tax_number`,
+`ship_to_province`, `po_number`, `contract_reference`, `language`,
+`tax_lines` (`tax_code`, `label`, `rate`, `amount`) and per-line `tax_code`;
+PO/contract resolution and province-tax validation are separate steps.
+Document text is untrusted and is never executed as instructions.
+
+Extraction failures use stable finding codes: `EXTRACTION_UNREADABLE` for a
+missing/unsupported/corrupt/password-protected file, and `EXTRACTION_FAILED`
+for provider, timeout, malformed-JSON or unusable-output errors. Both create a
+reviewable `DRAFT` rather than an API error.
 
 **Email**
 
@@ -322,12 +343,27 @@ values; it never guesses a field.
   "received_at": "2026-09-02T14:05:00Z",
   "body_excerpt": "Please find attached...",
   "attachment": { "filename": "inv.pdf", "content_type": "application/pdf" },
+  "attachments": [
+    {
+      "filename": "inv.pdf",
+      "content_type": "application/pdf",
+      "order": 0,
+      "status": "INGESTED",
+      "invoice_id": "AP-00051",
+      "error": ""
+    }
+  ],
   "classification": "INVOICE",
   "classification_confidence": "0.94",
   "invoice_id": "AP-00051",
+  "invoice_ids": ["AP-00051"],
   "status": "INGESTED"
 }
 ```
+
+`attachment` / `invoice_id` are the primary (first) attachment/invoice for
+backward compatibility; `attachments[]` / `invoice_ids[]` carry all of them.
+One email can produce multiple invoices (for example two invoice PDFs).
 
 ## 5. Invoices — extraction, coding, validation (features 2–5)
 
@@ -411,8 +447,12 @@ Filters for the list: `status`, `vendor_id`, `department_id`, `requester_id`,
 - `tax_lines` map each tax amount to a supplied tax code; `rate` is a string
   decimal (`"0.13"`). Place of supply is `ship_to_province`.
 - `lines` carry the accepted coding; `coding_suggestions` carry per-line
-  suggestions with a reason. Accepting or changing a suggestion is a `PATCH` and
-  is audited.
+  suggestions with a reason. Each suggestion has `line_no`,
+  `suggested_gl_account`, `suggested_department_id`, `confidence` and `reason`.
+  Suggestions are learned from the vendor's historical lines first, with an AI
+  fallback for unmatched lines; a line with no confident suggestion returns
+  `suggested_gl_account: null` and a reason asking for manual review. Accepted
+  or changed coding is a `PATCH` and is audited.
 
 ### 5.2 AnalysisResponse (canonical envelope)
 
@@ -448,6 +488,7 @@ Returned by `/analyze/`, and persisted on the invoice in
   ],
   "extraction": {
     "vendor_name": "Polar Freight Lines Ltd.",
+    "vendor_tax_number": "995133220RT0001",
     "invoice_number": "INV-1042",
     "invoice_date": "2026-09-01",
     "due_date": "2026-10-01",
@@ -455,6 +496,10 @@ Returned by `/analyze/`, and persisted on the invoice in
     "subtotal": "1000.00",
     "tax_lines": [{ "tax_code": "GST5", "amount": "50.00" }],
     "total": "1050.00",
+    "ship_to_province": "ON",
+    "po_number": null,
+    "contract_reference": null,
+    "language": "en",
     "line_items": [
       { "description": "Freight YYZ-YVR", "quantity": "1", "unit_price": "1000.00", "amount": "1000.00" }
     ]
@@ -519,15 +564,35 @@ MISSING_FIELD               INVALID_AMOUNT             TOTAL_MISMATCH
 EXTRACTION_FAILED           EXTRACTION_UNREADABLE      VENDOR_UNKNOWN
 VENDOR_ON_HOLD              TAX_RATE_MISMATCH          TAX_PROVINCE_MISMATCH
 EXACT_DUPLICATE             POSSIBLE_DUPLICATE         CARD_INVOICE
-PO_NOT_FOUND                PO_VENDOR_MISMATCH         PO_CURRENCY_MISMATCH
-PO_AMOUNT_EXCEEDED          CONTRACT_NOT_FOUND         CONTRACT_VENDOR_MISMATCH
-CONTRACT_CURRENCY_MISMATCH  CONTRACT_INACTIVE          CONTRACT_DATE_OUTSIDE_TERM
-CONTRACT_FEE_EXCEEDED       UNVERIFIED_BANK_CHANGE
+PO_NOT_FOUND                PO_REQUIRED_MISSING        PO_VENDOR_MISMATCH
+PO_CURRENCY_MISMATCH        PO_AMOUNT_EXCEEDED         PO_CUMULATIVE_EXCEEDED
+CONTRACT_NOT_FOUND          CONTRACT_VENDOR_MISMATCH   CONTRACT_CURRENCY_MISMATCH
+CONTRACT_INACTIVE           CONTRACT_DATE_OUTSIDE_TERM CONTRACT_FEE_EXCEEDED
+CONTRACT_RATE_EXCEEDED      CONTRACT_MONTHLY_CAP_EXCEEDED
+UNVERIFIED_BANK_CHANGE
 ```
 
 Duplicate severities: `EXACT_DUPLICATE` (same vendor + same number once
 formatting is normalized, including reformatted numbers) is `BLOCK`;
-`POSSIBLE_DUPLICATE` (near amount/date, or already paid by card) is `WARNING`.
+`POSSIBLE_DUPLICATE` (near amount/date, or already paid by card) and
+`CARD_INVOICE` (same vendor/amount within the card window) are `WARNING`.
+
+Validation rules:
+
+- Tax is checked against the **place of supply** (`ship_to_province`), using
+  the supplied tax-code rates. ON uses HST; BC adds PST on `goods` lines only;
+  QC adds QST; other Canadian provinces use GST; US/foreign vendors and
+  insurance vendors are expected to charge no Canadian tax. Missing province or
+  missing tax-code data is a `WARNING`; wrong/missing tax, a tax code not valid
+  for the province, or tax charged to an exempt/foreign vendor is `BLOCK`.
+- A PO/contract reference extracted from the document is resolved to the master
+  record. A reference that cannot be resolved is `BLOCK`
+  (`PO_NOT_FOUND`/`CONTRACT_NOT_FOUND`). A vendor with `requires_po=yes` and no
+  PO is `WARNING` (`PO_REQUIRED_MISSING`).
+- Cumulative PO spend and contract monthly caps include historical invoices on
+  the same PO/contract and exclude the invoice being analyzed. Exceeding either
+  cap is `BLOCK`.
+- Rate-card lines above the contract hourly-rate cap are `WARNING`.
 
 ### 5.4 Resolving a finding
 
@@ -606,11 +671,25 @@ POST   /api/vendors/{id}/bank-changes/{change_id}/approve/ -> BankChange
 POST   /api/vendors/{id}/bank-changes/{change_id}/reject/  -> BankChange
 ```
 
-- Onboarding creates `pending_review`; invoices for non-`active` vendors raise
-  `VENDOR_UNKNOWN` / `VENDOR_ON_HOLD`.
-- Bank details are never directly `PATCH`-able. A change creates a `pending`
-  `BankChange`; invoices from a vendor with a recent unverified change get
-  `UNVERIFIED_BANK_CHANGE`.
+- Onboarding creates `pending_review`. Invoices for `on_hold` or
+  `pending_review` vendors get a `VENDOR_ON_HOLD` BLOCK finding; unknown vendors
+  get `VENDOR_UNKNOWN`.
+- **Reads**: vendor list/detail are available to any authenticated user (bank
+  details masked); bank-change history is `AP_CLERK`/`FINANCE_MANAGER`/
+  `CONTROLLER`/`AUDITOR`. `on_leave` users may read but not perform writes.
+- **Writes**: onboard/PATCH/approve/hold/unhold are `FINANCE_MANAGER`/
+  `CONTROLLER`. `hold` is only valid from `active` (a `pending_review` vendor is
+  already blocked). A bank-change **request** may also be made by `AP_CLERK`;
+  approve/reject is `FINANCE_MANAGER`/`CONTROLLER`, and the requester cannot
+  decide their own change.
+- **One pending change per vendor.** A second request while one is `PENDING`
+  returns `409 INVALID_STATE_TRANSITION`.
+- Bank details are never directly `PATCH`-able (attempting it is
+  `400 VALIDATION_ERROR`). A request creates a `PENDING` `BankChange`; approval
+  applies the new account (4-32 digits) to the vendor and sets
+  `verified_by_callback: "yes"`. A rejected change is not applied, does not
+  retain the account number, and does not trigger `UNVERIFIED_BANK_CHANGE`.
+- `pending_bank_change` on `Vendor` is the masked pending change (or `null`).
 - Bank account numbers are masked in every response and log.
 
 **Vendor**
@@ -647,22 +726,28 @@ POST   /api/vendors/{id}/bank-changes/{change_id}/reject/  -> BankChange
 {
   "id": "BC-001",
   "vendor_id": "V015",
-  "status": "pending",
+  "status": "PENDING",
   "changed_at": "2026-01-14",
   "requested_by_id": "U020",
-  "request_channel": "email_request",
+  "request_channel": "api",
   "verified_by_callback": "no",
   "old_account_last4": "4821",
   "new_account_last4": "9933",
+  "note": "Called vendor on the number on file",
   "decided_by_id": null,
   "decided_at": null
 }
 ```
 
+Historical dataset rows predate the controlled workflow, so `status`,
+`decided_by_id`, and `decided_at` are `null` for them; do not infer a status from
+`verified_by_callback`. New changes use `PENDING`/`APPROVED`/`REJECTED`, and an
+approval applies the new bank account to the vendor.
+
 ## 7. Approvals, policies & delegation (feature 6)
 
 ```
-GET    /api/approvals/                  -> paginated Approval (filters: invoice_id, status, mine)
+GET    /api/approvals/                  -> paginated Approval (filters: invoice_id, status, mine, actionable)
 GET    /api/approvals/{id}/             -> Approval
 POST   /api/approvals/{id}/approve/     { comment } -> Invoice   (updated approval chain)
 POST   /api/approvals/{id}/reject/      { comment } -> Invoice   (returns invoice to REVIEW)
@@ -675,6 +760,11 @@ POST   /api/approvals/{id}/reject/      { comment } -> Invoice   (returns invoic
   delegation; inactive/terminated users cannot act; an approver cannot release
   the payment for an invoice they approved.
 - A rejected invoice returns to `REVIEW`; the approval chain is retained.
+- `mine=true` filters to steps assigned to the caller (directly, via an active
+  delegate, or role fallback) **regardless of status**; combine with
+  `status=PENDING` for decisions awaiting them.
+- `actionable=true` returns only what the caller can act on now: assigned to
+  them, `status=PENDING`, and the invoice is in `PENDING_APPROVAL`.
 
 ### 7.1 Submit routes atomically (3A)
 
@@ -721,17 +811,15 @@ DELETE /api/policies/{id}/     -> 204                (CONTROLLER; soft-archive, 
 
 ```json
 {
-  "id": "POL-01",
-  "name": "Operations over 25k",
-  "priority": 10,
+  "id": "POL-P02",
+  "name": "Over 10,000 CAD",
+  "priority": 20,
   "active": true,
   "conditions": {
-    "min_amount_cad": "25000.00",
-    "max_amount_cad": null,
-    "department_id": "D01",
-    "vendor_status": "active",
-    "legal_invoice": false,
-    "new_vendor": false
+    "match": "all",
+    "rules": [
+      { "field": "invoice.total_cad", "op": "gt", "value": "10000" }
+    ]
   },
   "steps": [
     { "step_no": 1, "role": "APPROVER", "approver_id": null },
@@ -740,7 +828,41 @@ DELETE /api/policies/{id}/     -> 204                (CONTROLLER; soft-archive, 
 }
 ```
 
-Every policy create/update/delete writes an audit event with before/after.
+- **Conditions are a bounded list**, not arbitrary expressions. `match` is
+  `all` or `any`; each rule has a whitelisted `field`, an allowed `op`, and a
+  typed `value` (max 20 rules).
+- Fields: `invoice.total_cad`, `invoice.currency`, `invoice.ship_to_province`,
+  `invoice.has_po`, `invoice.has_contract`, `invoice.is_credit_note`,
+  `invoice.department_id`, `invoice.requester_id`, `vendor.status`,
+  `vendor.category`, `vendor.province_or_state`, `vendor.requires_po`,
+  `vendor.is_new`, `vendor.onboarded_at`, `requester.role`,
+  `requester.department_id`.
+- Operators: `eq`, `ne`, `gt`, `gte`, `lt`, `lte`, `in`, `not_in`, `contains`,
+  `is_null`, `is_not_null` (type-restricted); strings compare
+  case-insensitively, money as decimals, dates as ISO dates. A null field only
+  matches `is_null`.
+- `vendor.is_new` = vendor `pending_review` or onboarded within 90 days.
+  `legal_invoice` is vendor category `Legal` (per `approval_policies.csv`).
+- **Engine**: all active matching policies are merged (priority order); a
+  department-manager step and the "amount above the manager's limit → finance"
+  invariant are always ensured (finance is placed before any controller step);
+  duplicate role/approver steps are removed; self-approval escalates to the
+  manager's manager. If no policy matches, the baseline chain is used. Policies
+  with no steps are reference rows and are never executed.
+- Steps are sequential (`step_no` assigned 1..n); `role` ∈ `APPROVER`,
+  `FINANCE_MANAGER`, `CONTROLLER`; optional `approver_id` must reference an
+  enabled user (`is_active=true`) whose role matches the step role, with status
+  `active` or `on_leave` plus an active delegate. An active policy requires at
+  least one step.
+- The resulting `Approval.reason` reflects the policy name (e.g.
+  `"Policy Over 10,000 CAD"`).
+- `DELETE` soft-archives (`active=false`); every create/update/delete is audited.
+- `manage.py seed_policies` seeds the P01–P06 structured defaults (idempotent;
+  never overwrites edits). The prose `approval_policies.csv` rows remain loaded
+  as inactive reference.
+- `rule_type=payment_release` and `rule_type=match` are **not** approval
+  policies: payment release limits/separation live in `/api/payments/`, and
+  PO/contract matching lives in invoice validation.
 
 ### 7.3 Delegation
 
@@ -782,6 +904,8 @@ POST   /api/payments/{id}/cancel/   -> Payment
   (`PERMISSION_DENIED`).
 - `release` is idempotent: repeating it returns the same payment and never
   creates a second one.
+- Release is refused (`409 INVALID_STATE_TRANSITION`) when the linked invoice is
+  already `PAID` (covers historical `scheduled` payments on paid invoices).
 - Payment execution is simulated; `RELEASED` and `PAID` are recorded, no real
   funds move.
 - **Release executes immediately (4A).** `POST /api/payments/{id}/release/`
@@ -972,7 +1096,15 @@ features 3 and 4.
   (`invoice_id`, `vendor_id`, `payment_id`, `department_id`, …); `User.id`
   is `user_id` (`U007`).
 - `extraction` (API) ↔ `Invoice.raw_extraction`.
-- Historical dataset statuses are normalized on serialization to the canonical
-  enums above; new records use the canonical values.
+- Historical dataset statuses are normalized on serialization:
+  - `Payment.status`: `settled` → `PAID`, `scheduled` → `SCHEDULED`,
+    `outstanding` → `SCHEDULED`; new records use the canonical values.
+  - `Payment.status` query filters accept canonical values: `SCHEDULED` matches
+    stored `scheduled`/`outstanding` and `PAID` matches stored `settled`. The
+    legacy lowercase aliases still match their exact stored rows.
+  - `Invoice.validation_status`: historical rows were never analyzed, so an
+    empty string is serialized as `null`.
+  - `Approval.comment`: an undecided step's empty comment is serialized as
+    `null`.
 - `bank_account` is stored for matching but only `bank_account_masked` is ever
   serialized.

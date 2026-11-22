@@ -11,11 +11,43 @@ from __future__ import annotations
 
 import logging
 
-from rest_framework.exceptions import AuthenticationFailed, NotAuthenticated
+from rest_framework.exceptions import APIException, AuthenticationFailed, NotAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import exception_handler
 
 logger = logging.getLogger(__name__)
+
+
+class InvalidStateTransition(APIException):
+    """Raised when an action is not legal from the current state (409)."""
+
+    status_code = 409
+    default_detail = "Action is not valid for the current state."
+    default_code = "INVALID_STATE_TRANSITION"
+
+
+class ValidationBlocked(APIException):
+    """Raised when an unresolved BLOCK finding prevents an action (422)."""
+
+    status_code = 422
+    default_detail = "Unresolved blocking findings prevent this action."
+    default_code = "VALIDATION_BLOCKED"
+
+
+class SelfApprovalBlocked(APIException):
+    """Raised when the requester tries to approve their own invoice (409)."""
+
+    status_code = 409
+    default_detail = "You cannot approve an invoice you requested."
+    default_code = "SELF_APPROVAL_BLOCKED"
+
+
+class LimitExceeded(APIException):
+    """Raised when a release exceeds the actor's CAD limit (409)."""
+
+    status_code = 409
+    default_detail = "Amount exceeds the actor's release limit."
+    default_code = "LIMIT_EXCEEDED"
 
 # Status -> stable contract code. Unknown 4xx fall back to VALIDATION_ERROR.
 _STATUS_CODES = {
@@ -29,6 +61,20 @@ _STATUS_CODES = {
     415: "VALIDATION_ERROR",
     422: "VALIDATION_BLOCKED",
     429: "VALIDATION_ERROR",
+}
+
+# Exceptions may pin a more specific contract code than their HTTP status implies
+# (e.g. 409 can be INVALID_STATE_TRANSITION or SELF_APPROVAL_BLOCKED).
+_CONTRACT_CODES = {
+    "UNAUTHENTICATED",
+    "PERMISSION_DENIED",
+    "NOT_FOUND",
+    "INVALID_STATE_TRANSITION",
+    "SELF_APPROVAL_BLOCKED",
+    "LIMIT_EXCEEDED",
+    "VALIDATION_BLOCKED",
+    "VALIDATION_ERROR",
+    "INTERNAL_ERROR",
 }
 
 
@@ -72,11 +118,14 @@ def api_exception_handler(exc, context):
     if isinstance(exc, (AuthenticationFailed, NotAuthenticated)):
         response.status_code = 401
 
-    code = (
-        "INTERNAL_ERROR"
-        if response.status_code >= 500
-        else _STATUS_CODES.get(response.status_code, "VALIDATION_ERROR")
-    )
+    if response.status_code >= 500:
+        code = "INTERNAL_ERROR"
+    else:
+        custom_code = getattr(exc, "default_code", None)
+        if custom_code in _CONTRACT_CODES:
+            code = custom_code
+        else:
+            code = _STATUS_CODES.get(response.status_code, "VALIDATION_ERROR")
 
     original = response.data
     details = original if isinstance(original, (dict, list)) else {}

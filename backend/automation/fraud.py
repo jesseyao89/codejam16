@@ -26,6 +26,9 @@ def detect_bank_change_risk(
     for change in bank_changes:
         if change.get("vendor_id") != vendor_id:
             continue
+        # A rejected change was never applied; it must not keep blocking invoices.
+        if change.get("status") == "REJECTED":
+            continue
 
         try:
             change_day = date.fromisoformat(

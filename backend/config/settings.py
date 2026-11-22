@@ -72,6 +72,7 @@ INSTALLED_APPS = [
     "apps.accounts",
     "apps.vendors",
     "apps.invoices",
+    "apps.inbox",
     "apps.approvals",
     "apps.payments",
     "apps.audit",
@@ -173,6 +174,11 @@ STORAGES = {
     },
 }
 
+# Uploaded invoices are kept on disk but never served publicly or serialized raw
+# (AGENTS.md §8). Keep this directory out of Git.
+MEDIA_URL = "/media/"
+MEDIA_ROOT = BASE_DIR / "media"
+
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
 
@@ -194,6 +200,8 @@ REST_FRAMEWORK = {
     ],
     # Every 4xx/5xx returns the contract error envelope (docs/API_CONTRACT.md §1.2).
     "EXCEPTION_HANDLER": "apps.accounts.exceptions.api_exception_handler",
+    "DEFAULT_PAGINATION_CLASS": "config.pagination.RelativePageNumberPagination",
+    "PAGE_SIZE": 25,
     "TEST_REQUEST_DEFAULT_FORMAT": "json",
 }
 
@@ -203,3 +211,8 @@ REST_FRAMEWORK = {
 DATA_DIR = Path(
     os.environ.get("DATA_DIR", BASE_DIR.parent / "datasets" / "brim_ap_dataset")
 )
+
+# Optional override for the inbox attachment directory. When unset, the inbox
+# service uses DATA_DIR/incoming_invoices at request time (so DATA_DIR overrides
+# are respected).
+INBOX_ATTACHMENT_DIR = os.environ.get("INBOX_ATTACHMENT_DIR")

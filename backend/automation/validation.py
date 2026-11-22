@@ -41,10 +41,22 @@ def validate_invoice(invoice_data: dict) -> list:
             subtotal = Decimal(str(subtotal))
             total = Decimal(str(total))
 
-            gst = Decimal(str(invoice_data.get("gst_hst") or "0"))
-            pst = Decimal(str(invoice_data.get("pst_qst") or "0"))
+            tax_lines = invoice_data.get("tax_lines")
+            if isinstance(tax_lines, list) and tax_lines:
+                tax_total = Decimal("0")
+                for line in tax_lines:
+                    if not isinstance(line, dict):
+                        continue
+                    amount = line.get("amount")
+                    if amount in (None, ""):
+                        continue
+                    tax_total += Decimal(str(amount))
+            else:
+                tax_total = Decimal(str(invoice_data.get("gst_hst") or "0")) + Decimal(
+                    str(invoice_data.get("pst_qst") or "0")
+                )
 
-            expected_total = subtotal + gst + pst
+            expected_total = subtotal + tax_total
 
             if abs(expected_total - total) > Decimal("0.02"):
                 findings.append({
@@ -57,7 +69,7 @@ def validate_invoice(invoice_data: dict) -> list:
                     }
                 })
 
-        except InvalidOperation:
+        except (InvalidOperation, TypeError, ValueError):
             findings.append({
                 "code": "INVALID_AMOUNT",
                 "severity": "BLOCK",
