@@ -54,3 +54,35 @@ export function describeError(error: unknown): ErrorPresentation {
     hint: null,
   }
 }
+
+/**
+ * DRF serializer errors arrive in `error.details` as field -> string[].
+ * Flatten the first message per field so forms can show inline validation.
+ */
+export function getFieldErrors(error: unknown): Record<string, string> {
+  if (!isApiError(error)) return {}
+
+  const details = error.details
+
+  if (Array.isArray(details)) {
+    const first = details.find((item) => typeof item === 'string')
+    return typeof first === 'string' ? { detail: first } : {}
+  }
+
+  if (!details || typeof details !== 'object') return {}
+
+  const result: Record<string, string> = {}
+
+  for (const [key, value] of Object.entries(
+    details as Record<string, unknown>
+  )) {
+    if (typeof value === 'string') {
+      result[key] = value
+    } else if (Array.isArray(value)) {
+      const first = value.find((item) => typeof item === 'string')
+      if (typeof first === 'string') result[key] = first
+    }
+  }
+
+  return result
+}

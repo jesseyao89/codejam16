@@ -48,6 +48,19 @@ export const VENDOR_WRITE_ROLES = new Set<string>([
   'CONTROLLER',
 ])
 
+export const BANK_CHANGE_REQUEST_ROLES = new Set<string>([
+  'AP_CLERK',
+  'FINANCE_MANAGER',
+  'CONTROLLER',
+])
+
+export const BANK_CHANGE_READ_ROLES = new Set<string>([
+  'AP_CLERK',
+  'FINANCE_MANAGER',
+  'CONTROLLER',
+  'AUDITOR',
+])
+
 export const POLICY_ADMIN_ROLES = new Set<string>(['CONTROLLER'])
 
 export const USER_ADMIN_ROLES = new Set<string>(['CONTROLLER'])
@@ -123,6 +136,20 @@ export function canManageInbox(role: UserRole | string): boolean {
 
 export function canManageVendors(role: UserRole | string): boolean {
   return VENDOR_WRITE_ROLES.has(role)
+}
+
+export function canRequestBankChange(role: UserRole | string): boolean {
+  return BANK_CHANGE_REQUEST_ROLES.has(role)
+}
+
+export function canReadVendorBankChanges(
+  role: UserRole | string
+): boolean {
+  return BANK_CHANGE_READ_ROLES.has(role)
+}
+
+export function isActiveUser(status: string | undefined): boolean {
+  return status === 'active'
 }
 
 export function canEditPolicies(role: UserRole | string): boolean {

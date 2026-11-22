@@ -1044,7 +1044,9 @@ function App() {
           {currentPage === 'Payments' && (
             <Payments user={user} onDataChanged={refreshData} />
           )}
-          {currentPage === 'Vendors' && <Vendors />}
+          {currentPage === 'Vendors' && (
+            <Vendors user={user} onDataChanged={refreshData} />
+          )}
           {currentPage === 'Audit Trail' && canViewAudit(user.role) && (
             <Audit
               user={user}

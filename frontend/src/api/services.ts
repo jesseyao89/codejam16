@@ -57,16 +57,19 @@ export interface Vendor {
   status: string
 }
 
+export type BankChangeStatus = 'PENDING' | 'APPROVED' | 'REJECTED'
+
 export interface BankChange {
   id: string
   vendor_id: string
-  status: string | null
+  status: BankChangeStatus | null
   changed_at: string | null
   requested_by_id: string | null
   request_channel: string
   verified_by_callback: string
   old_account_last4: string | null
   new_account_last4: string | null
+  note: string
   decided_by_id: string | null
   decided_at: string | null
 }
@@ -93,6 +96,28 @@ export interface VendorDetail {
   status: string
   onboarded_at: string | null
   pending_bank_change: BankChange | null
+}
+
+export interface VendorWritePayload {
+  legal_name?: string
+  category?: string
+  default_gl_account?: string
+  address?: string
+  province_or_state?: string
+  country?: string
+  gst_hst_number?: string
+  qst_number?: string
+  payment_terms_days?: number | null
+  early_pay_discount?: string
+  preferred_payment_method?: string
+  accepts_card_payment?: string
+  ap_contact_email?: string
+  requires_po?: string
+}
+
+export interface BankChangeRequest {
+  bank_account: string
+  note?: string
 }
 
 export interface Finding {
@@ -528,6 +553,48 @@ export const vendorService = {
           page_size: ALL_PAGES_SIZE,
         })}`
       )
+    ),
+
+  create: (payload: VendorWritePayload) =>
+    api.post<VendorDetail>('/vendors/', payload),
+
+  update: (id: string, payload: VendorWritePayload) =>
+    api.patch<VendorDetail>(
+      `/vendors/${encodeURIComponent(id)}/`,
+      payload
+    ),
+
+  approve: (id: string) =>
+    api.post<VendorDetail>(
+      `/vendors/${encodeURIComponent(id)}/approve/`
+    ),
+
+  hold: (id: string) =>
+    api.post<VendorDetail>(`/vendors/${encodeURIComponent(id)}/hold/`),
+
+  unhold: (id: string) =>
+    api.post<VendorDetail>(
+      `/vendors/${encodeURIComponent(id)}/unhold/`
+    ),
+
+  requestBankChange: (id: string, payload: BankChangeRequest) =>
+    api.post<BankChange>(
+      `/vendors/${encodeURIComponent(id)}/bank-changes/`,
+      payload
+    ),
+
+  approveBankChange: (id: string, changeId: string) =>
+    api.post<BankChange>(
+      `/vendors/${encodeURIComponent(id)}/bank-changes/${encodeURIComponent(
+        changeId
+      )}/approve/`
+    ),
+
+  rejectBankChange: (id: string, changeId: string) =>
+    api.post<BankChange>(
+      `/vendors/${encodeURIComponent(id)}/bank-changes/${encodeURIComponent(
+        changeId
+      )}/reject/`
     ),
 }
 

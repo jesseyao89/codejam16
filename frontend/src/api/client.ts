@@ -20,12 +20,19 @@ export interface PaginatedResponse<T> {
 export class ApiError extends Error {
   code: string
   status: number
+  details: unknown
 
-  constructor(message: string, code: string, status: number) {
+  constructor(
+    message: string,
+    code: string,
+    status: number,
+    details: unknown = {}
+  ) {
     super(message)
     this.name = 'ApiError'
     this.code = code
     this.status = status
+    this.details = details
   }
 }
 
@@ -72,7 +79,8 @@ async function request<T>(
     throw new ApiError(
       body?.error?.message || 'Something went wrong',
       body?.error?.code || 'UNKNOWN_ERROR',
-      response.status
+      response.status,
+      body?.error?.details ?? {}
     )
   }
 
@@ -96,7 +104,8 @@ async function requestBlob(endpoint: string): Promise<Blob> {
     throw new ApiError(
       body?.error?.message || 'Something went wrong',
       body?.error?.code || 'UNKNOWN_ERROR',
-      response.status
+      response.status,
+      body?.error?.details ?? {}
     )
   }
 
