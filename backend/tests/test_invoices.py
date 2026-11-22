@@ -1,10 +1,13 @@
 """Invoice read/write path tests (contract §4, §5)."""
 
+from decimal import Decimal
+from io import StringIO
 from unittest import mock
 
 import pytest
 from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
+from django.core.management import call_command
 from rest_framework.test import APIClient
 
 from apps.accounts.models import Department
@@ -424,3 +427,16 @@ def test_upload_cad_sets_total_cad_and_fx(client, vendor, settings, tmp_path):
     assert response.status_code == 201
     assert response.data["total_cad"] == "105.00"
     assert response.data["fx_rate_to_cad"] == "1.000000"
+
+
+@pytest.mark.django_db
+def test_backfill_fx_fills_cad_invoice():
+    invoice = Invoice.objects.create(
+        invoice_id="AP-00001", currency="CAD", total="3172.79", total_cad=None
+    )
+
+    call_command("backfill_fx", stdout=StringIO())
+
+    invoice.refresh_from_db()
+    assert invoice.total_cad == Decimal("3172.79")
+    assert invoice.fx_rate_to_cad == Decimal("1.0")

@@ -255,3 +255,29 @@ def test_release_refuses_when_invoice_already_paid(finance, invoice):
 
     assert response.status_code == 409
     assert response.data["error"]["code"] == "INVALID_STATE_TRANSITION"
+
+
+def test_payment_status_filter_accepts_canonical_values(controller, invoice):
+    for payment_id, status in (
+        ("P-1", "settled"),
+        ("P-2", "scheduled"),
+        ("P-3", "outstanding"),
+        ("P-4", "PAID"),
+        ("P-5", "PREPARED"),
+    ):
+        Payment.objects.create(
+            payment_id=payment_id,
+            invoice=invoice,
+            status=status,
+            amount="1.00",
+            currency="CAD",
+            amount_cad="1.00",
+        )
+
+    def ids(status):
+        response = _client(controller).get(f"/api/payments/?status={status}")
+        return {row["id"] for row in response.data["results"]}
+
+    assert ids("PAID") == {"P-1", "P-4"}
+    assert ids("SCHEDULED") == {"P-2", "P-3"}
+    assert ids("settled") == {"P-1"}

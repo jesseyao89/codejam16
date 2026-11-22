@@ -989,6 +989,9 @@ features 3 and 4.
 - Historical dataset statuses are normalized on serialization:
   - `Payment.status`: `settled` → `PAID`, `scheduled` → `SCHEDULED`,
     `outstanding` → `SCHEDULED`; new records use the canonical values.
+  - `Payment.status` query filters accept canonical values: `SCHEDULED` matches
+    stored `scheduled`/`outstanding` and `PAID` matches stored `settled`. The
+    legacy lowercase aliases still match their exact stored rows.
   - `Invoice.validation_status`: historical rows were never analyzed, so an
     empty string is serialized as `null`.
   - `Approval.comment`: an undecided step's empty comment is serialized as

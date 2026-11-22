@@ -15,6 +15,17 @@ from apps.payments.serializers import PaymentSerializer
 _EDIT_ROLES = {"AP_CLERK", "FINANCE_MANAGER", "CONTROLLER"}
 _RELEASE_ROLES = {"FINANCE_MANAGER", "CONTROLLER"}
 
+# Canonical query value -> stored values that serialize to it.
+_CANONICAL_STATUS_VALUES = {
+    "PREPARED": ("PREPARED",),
+    "SCHEDULED": ("SCHEDULED", "scheduled", "outstanding"),
+    "RELEASED": ("RELEASED",),
+    "PAID": ("PAID", "settled"),
+    "FAILED": ("FAILED",),
+    "CANCELLED": ("CANCELLED",),
+}
+_LEGACY_STATUS_VALUES = {"settled", "scheduled", "outstanding"}
+
 
 class PaymentListView(generics.ListAPIView):
     serializer_class = PaymentSerializer
@@ -24,7 +35,14 @@ class PaymentListView(generics.ListAPIView):
         queryset = services.payments_visible_to(self.request.user)
         params = self.request.query_params
         if params.get("status"):
-            queryset = queryset.filter(status=params["status"])
+            value = params["status"].strip()
+            if value in _LEGACY_STATUS_VALUES:
+                # Legacy lowercase aliases still match their exact stored rows.
+                queryset = queryset.filter(status=value)
+            else:
+                queryset = queryset.filter(
+                    status__in=_CANONICAL_STATUS_VALUES.get(value.upper(), (value,))
+                )
         if params.get("invoice_id"):
             queryset = queryset.filter(invoice_id=params["invoice_id"])
         return queryset.select_related(
