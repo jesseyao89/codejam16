@@ -1,0 +1,22 @@
+[project]
+name = "backend"
+version = "0.1.0"
+description = "Brim AP Automation backend (Django + DRF)"
+requires-python = ">=3.12"
+dependencies = [
+    "django>=5.2,<6.0",
+    "djangorestframework>=3.18.3",
+    "openai>=3.57.0",
+    "pymupdf>=2.1",
+    "python-dotenv>=1.2.4",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.2.0",
+    "pytest-django>=4.14.0",
+]
+
+[tool.pytest.ini_options]
+DJANGO_SETTINGS_MODULE = "config.settings"
+python_files = ["test_*.py", "*_test.py", "tests.py"]

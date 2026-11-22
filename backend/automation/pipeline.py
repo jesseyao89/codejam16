@@ -40,14 +40,17 @@ def analyze_invoice(invoice_data: dict, reference_data: dict) -> dict:
             reference_data.get("contracts", [])
         ))
 
-    # 6. Suggest GL accounts using AI
+    # 6. Suggest GL accounts using AI (best-effort; degrades to manual coding).
     coding_suggestions = []
 
     if reference_data.get("gl_accounts"):
-        coding_suggestions = suggest_gl_account(
-            invoice_data,
-            reference_data["gl_accounts"]
-        )
+        try:
+            coding_suggestions = suggest_gl_account(
+                invoice_data,
+                reference_data["gl_accounts"]
+            )
+        except Exception:  # noqa: BLE001 - provider errors degrade gracefully
+            coding_suggestions = []
 
     # 7. Determine final status
     if any(f.get("severity") == "BLOCK" for f in findings):
@@ -58,8 +61,8 @@ def analyze_invoice(invoice_data: dict, reference_data: dict) -> dict:
         status = "PASSED"
 
     return {
-        "status": status,
+        "validation_status": status,
         "findings": findings,
         "coding_suggestions": coding_suggestions,
-        "requires_human_approval": True
+        "extraction": invoice_data,
     }
