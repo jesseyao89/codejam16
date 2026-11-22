@@ -12,6 +12,8 @@ same PR as the code and tell the frontend and backend owners.
 - Added the **error envelope** and a **pagination envelope**.
 - Added auth, AP-inbox, vendor mutations and bank changes, approval-policy
   administration, delegation, global audit + export, and `resolve-finding`.
+- Added reference-data endpoints, the `PATCH /invoices/{id}/` body, a role ×
+  capability matrix, and concrete dashboard / invoice-trace item types.
 - Duplicate findings split into `EXACT_DUPLICATE` (`BLOCK`) and
   `POSSIBLE_DUPLICATE` (`WARNING`).
 - Single-resource responses stay **bare objects** (no `{ "data": ... }`
@@ -190,7 +192,91 @@ There is no signup endpoint. The same table is kept in `docs/DEMO_USERS.md`.
 }
 ```
 
-## 3. Invoice intake & AP inbox (feature 1)
+### 2.2 Role × capability matrix
+
+Legend: ✅ allowed · ❌ forbidden · ⚠️ conditional (see notes) · — not applicable.
+
+| Capability | Employee | AP Clerk | Approver | Finance Mgr | Controller | Auditor |
+|---|---|---|---|---|---|---|
+| Submit / upload invoices | ✅ own dept | ✅ | ✅ own dept | ✅ | ✅ | ❌ |
+| See invoices | own dept | all | own dept | all | all | all (read) |
+| Correct coding / review extraction | ❌ | ✅ | ❌ | ✅ | ✅ | ❌ |
+| Resolve `WARNING` findings | ❌ | ✅ | ❌ | ✅ | ✅ | ❌ |
+| Approve / reject | ❌ | ❌ | ⚠️ own dept ≤ limit | ⚠️ above limit / flagged / new vendor | — | ❌ |
+| Prepare payment | ❌ | ✅ | ❌ | ✅ | ✅ | ❌ |
+| Release payment | ❌ | ❌ | ❌ | ⚠️ ≤ CAD 100,000 | ✅ any | ❌ |
+| Vendor onboard / approve / hold | ❌ | ❌ | ❌ | ✅ | ✅ | ❌ |
+| Approve vendor bank change | ❌ | ❌ | ❌ | ✅ | ✅ | ❌ |
+| Edit approval policies | ❌ | ❌ | ❌ | ❌ | ✅ | ❌ |
+| Manage users & roles | ❌ | ❌ | ❌ | ❌ | ✅ | ❌ |
+| View / export audit | ❌ | ❌ | ❌ | ❌ | ✅ | ✅ |
+
+Universal rules override the table:
+
+- No self-approval — the requester never approves their own invoice; it
+  escalates to their manager.
+- Separation of duties — anyone who approved an invoice cannot release its
+  payment (applies to `APPROVER`, `FINANCE_MANAGER` and `CONTROLLER`).
+- Delegated actions are recorded as delegated (`delegated_for_id` /
+  `on_behalf_of_id`).
+- Inactive / terminated users cannot act; active delegation is checked on every
+  action.
+- Lists are server-scoped: a role never receives rows it may not see. The UI
+  hiding a control is never the enforcement.
+- `CONTROLLER` is not an approval-routing target; policies route to `APPROVER`
+  then `FINANCE_MANAGER`.
+
+## 3. Reference data (departments, GL accounts, tax codes)
+
+```
+GET    /api/departments/     -> paginated Department    (all authenticated roles)
+GET    /api/gl-accounts/     -> paginated GLAccount     (filter: account_type)
+GET    /api/tax-codes/       -> paginated TaxCode       (all authenticated roles)
+```
+
+Read-only pickers for the coding and review UI. They use the pagination
+envelope like every list; request `?page_size=100` to fetch the full set in one
+call.
+
+**Department**
+
+```json
+{ "id": "D01", "name": "Operations", "cost_centre": "1100", "annual_budget_cad": "1800000.00", "manager_id": "U007" }
+```
+
+**GLAccount**
+
+```json
+{ "account_number": "5010", "name": "Freight & Carrier Costs", "account_type": "expense", "notes": "" }
+```
+
+- `account_number` is the canonical code used in `lines[].gl_account` and
+  `coding_suggestions[].suggested_gl_account`; it is the resource identifier
+  (there is no separate `id` for GL accounts).
+- `account_type` ∈ `asset | liability | expense`; the coding picker fetches
+  `?account_type=expense`.
+
+**TaxCode**
+
+```json
+{ "code": "GST5", "description": "GST 5%", "rate": "0.05", "applies_to": "all", "recoverable": "yes", "gl_account": "1160" }
+```
+
+Canonical tax codes (used in `tax_lines[].tax_code` and
+`lines[].gst_hst_code` / `pst_qst_code`):
+
+```
+GST5      GST 5%
+HST13     Ontario HST 13%
+PST7_BC   BC PST 7% (goods only)
+QST9975   Quebec QST 9.975% (on the pre-tax amount)
+EXEMPT    Exempt supply (e.g. insurance premiums)
+FOREIGN   Foreign vendor, no Canadian tax charged
+```
+
+`rate` is a decimal string; `EXEMPT` and `FOREIGN` have `rate: "0"`.
+
+## 4. Invoice intake & AP inbox (feature 1)
 
 ```
 GET    /api/inbox/                     -> paginated Email
@@ -207,7 +293,7 @@ POST   /api/inbox/{id}/dismiss/        -> 204
 - Upload path: `POST /api/invoices/upload/` (multipart `file`) does the same
   for a direct upload.
 
-### 3.1 Extraction failure & unknown vendors (2A)
+### 4.1 Extraction failure & unknown vendors (2A)
 
 Intake never fails silently and never fabricates data. A stored upload or inbox
 attachment always produces a reviewable `DRAFT` invoice:
@@ -242,7 +328,7 @@ values; it never guesses a field.
 }
 ```
 
-## 4. Invoices — extraction, coding, validation (features 2–5)
+## 5. Invoices — extraction, coding, validation (features 2–5)
 
 ```
 GET    /api/invoices/                      -> paginated Invoice
@@ -257,7 +343,7 @@ POST   /api/invoices/{id}/resolve-finding/ { finding_id, justification } -> Invo
 Filters for the list: `status`, `vendor_id`, `department_id`, `requester_id`,
 `validation_status`, `q` (free text over vendor name / invoice number).
 
-### 4.1 Invoice
+### 5.1 Invoice
 
 ```json
 {
@@ -270,12 +356,12 @@ Filters for the list: `status`, `vendor_id`, `department_id`, `requester_id`,
   "due_date": "2026-10-01",
   "currency": "USD",
   "subtotal": "1000.00",
-  "tax_lines": [{ "tax_code": "GST", "rate": "0.05", "amount": "50.00" }],
+  "tax_lines": [{ "tax_code": "GST5", "rate": "0.05", "amount": "50.00" }],
   "total": "1050.00",
   "fx_rate_to_cad": "1.3800",
   "fx_rate_date": "2026-09-01",
   "total_cad": "1449.00",
-  "ship_to_province": "ON",
+  "ship_to_province": "AB",
   "department": { "id": "D01", "name": "Operations" },
   "requester_id": "U012",
   "po_id": "PO-2026-0001",
@@ -287,9 +373,9 @@ Filters for the list: `status`, `vendor_id`, `department_id`, `requester_id`,
       "quantity": "1.00",
       "unit_price": "1000.00",
       "amount": "1000.00",
-      "gl_account": "5100",
+      "gl_account": "5010",
       "department_id": "D01",
-      "gst_hst_code": "GST",
+      "gst_hst_code": "GST5",
       "pst_qst_code": "",
       "line_type": "expense"
     }
@@ -308,7 +394,7 @@ Filters for the list: `status`, `vendor_id`, `department_id`, `requester_id`,
   "coding_suggestions": [
     {
       "line_no": 1,
-      "suggested_gl_account": "5100",
+      "suggested_gl_account": "5010",
       "suggested_department_id": "D01",
       "confidence": "0.87",
       "reason": "Matches 14 historical Polar Freight freight invoices"
@@ -327,7 +413,7 @@ Filters for the list: `status`, `vendor_id`, `department_id`, `requester_id`,
   suggestions with a reason. Accepting or changing a suggestion is a `PATCH` and
   is audited.
 
-### 4.2 AnalysisResponse (canonical envelope)
+### 5.2 AnalysisResponse (canonical envelope)
 
 Returned by `/analyze/`, and persisted on the invoice in
 `validation_status`, `findings`, `coding_suggestions`, `raw_extraction`.
@@ -353,7 +439,7 @@ Returned by `/analyze/`, and persisted on the invoice in
   "coding_suggestions": [
     {
       "line_no": 1,
-      "suggested_gl_account": "5100",
+      "suggested_gl_account": "5010",
       "suggested_department_id": "D01",
       "confidence": "0.87",
       "reason": "Matches historical freight invoices"
@@ -366,7 +452,7 @@ Returned by `/analyze/`, and persisted on the invoice in
     "due_date": "2026-10-01",
     "currency": "USD",
     "subtotal": "1000.00",
-    "tax_lines": [{ "tax_code": "GST", "amount": "50.00" }],
+    "tax_lines": [{ "tax_code": "GST5", "amount": "50.00" }],
     "total": "1050.00",
     "line_items": [
       { "description": "Freight YYZ-YVR", "quantity": "1", "unit_price": "1000.00", "amount": "1000.00" }
@@ -379,7 +465,7 @@ Returned by `/analyze/`, and persisted on the invoice in
 not proof that skipped checks passed: missing reference data is reported as a
 finding, never as silence.
 
-### 4.3 Validation finding
+### 5.3 Validation finding
 
 ```json
 {
@@ -442,7 +528,7 @@ Duplicate severities: `EXACT_DUPLICATE` (same vendor + same number once
 formatting is normalized, including reformatted numbers) is `BLOCK`;
 `POSSIBLE_DUPLICATE` (near amount/date, or already paid by card) is `WARNING`.
 
-### 4.4 Resolving a finding
+### 5.4 Resolving a finding
 
 `POST /api/invoices/{id}/resolve-finding/`
 
@@ -463,7 +549,47 @@ Request:
 - Allowed for `AP_CLERK` (and `FINANCE_MANAGER`, `CONTROLLER`). The response is
   the updated `Invoice`.
 
-## 5. Vendors & bank changes (feature 9)
+### 5.5 Editing an invoice (PATCH)
+
+```
+PATCH  /api/invoices/{id}/   -> Invoice   (AP_CLERK, FINANCE_MANAGER, CONTROLLER; DRAFT/REVIEW only)
+```
+
+Partial update, `application/json` (multipart is only for upload). Unknown fields
+are rejected with `400 VALIDATION_ERROR`.
+
+Allowed header fields: `vendor_id`, `invoice_number`, `invoice_date`,
+`received_date`, `due_date`, `currency`, `subtotal`, `total`, `tax_lines`
+(array of `{ tax_code, amount }`; `rate` is recomputed from the code),
+`ship_to_province`, `department_id`, `requester_id`, `po_id`, `contract_id`.
+
+Line coding is a partial, per-line update keyed by `line_no`:
+
+```json
+{
+  "department_id": "D01",
+  "vendor_id": "V015",
+  "ship_to_province": "AB",
+  "lines": [
+    { "line_no": 1, "gl_account": "5010", "department_id": "D01" }
+  ]
+}
+```
+
+- Each `lines[]` entry is matched by `line_no`; only the fields present on the
+  entry change. Unknown `line_no` → `400 VALIDATION_ERROR`.
+- Per line you may set `gl_account` (a valid `account_number`) and
+  `department_id`. Setting both to the suggested values = "accept suggestion";
+  setting different values = an override. Either writes an audit event
+  (before/after).
+- `PATCH` persists data and does **not** re-run analysis. Call
+  `POST /invoices/{id}/analyze/` afterwards to recompute findings and
+  `validation_status`.
+- To clear a `BLOCK`, fix the underlying field via `PATCH` and re-analyze;
+  `resolve-finding` only handles `WARNING`s.
+- Editable only in `DRAFT` or `REVIEW`; otherwise `409 INVALID_STATE_TRANSITION`.
+
+## 6. Vendors & bank changes (feature 9)
 
 ```
 GET    /api/vendors/                    -> paginated Vendor   (filters: status, category, q)
@@ -493,7 +619,7 @@ POST   /api/vendors/{id}/bank-changes/{change_id}/reject/  -> BankChange
   "id": "V015",
   "legal_name": "Polar Freight Lines Ltd.",
   "category": "Freight",
-  "default_gl_account": "5100",
+  "default_gl_account": "5010",
   "address": "100 Main St, Toronto, ON",
   "province_or_state": "ON",
   "country": "CA",
@@ -532,7 +658,7 @@ POST   /api/vendors/{id}/bank-changes/{change_id}/reject/  -> BankChange
 }
 ```
 
-## 6. Approvals, policies & delegation (feature 6)
+## 7. Approvals, policies & delegation (feature 6)
 
 ```
 GET    /api/approvals/                  -> paginated Approval (filters: invoice_id, status, mine)
@@ -549,7 +675,7 @@ POST   /api/approvals/{id}/reject/      { comment } -> Invoice   (returns invoic
   the payment for an invoice they approved.
 - A rejected invoice returns to `REVIEW`; the approval chain is retained.
 
-### 6.1 Submit routes atomically (3A)
+### 7.1 Submit routes atomically (3A)
 
 There is no separate routing endpoint. `POST /api/invoices/{id}/submit/` does,
 in one transaction:
@@ -582,7 +708,7 @@ explains the routing.
 }
 ```
 
-### 6.2 Approval policies (admin-editable, audited)
+### 7.2 Approval policies (admin-editable, audited)
 
 ```
 GET    /api/policies/          -> paginated Policy   (CONTROLLER, AUDITOR)
@@ -615,7 +741,7 @@ DELETE /api/policies/{id}/     -> 204                (CONTROLLER; soft-archive, 
 
 Every policy create/update/delete writes an audit event with before/after.
 
-### 6.3 Delegation
+### 7.3 Delegation
 
 ```
 GET    /api/delegations/        -> paginated Delegation
@@ -637,7 +763,7 @@ DELETE /api/delegations/{id}/   -> 204
 Actions taken by a delegate return `delegated_for_id` on the approval and set
 `on_behalf_of_id` on the audit event.
 
-## 7. Payments (feature 7)
+## 8. Payments (feature 7)
 
 ```
 GET    /api/payments/               -> paginated Payment (filters: status, invoice_id)
@@ -690,7 +816,7 @@ POST   /api/payments/{id}/cancel/   -> Payment
 }
 ```
 
-## 8. Audit trail & dashboard (feature 8)
+## 9. Audit trail & dashboard (feature 8)
 
 ```
 GET    /api/audit/                  -> paginated AuditEvent   (AUDITOR, CONTROLLER; role-scoped)
@@ -731,21 +857,36 @@ approval chain, payment and accounting codes for the audit-ready view:
   "invoice": {},
   "approvals": [],
   "payments": [],
-  "coding_history": [],
+  "coding_history": [
+    {
+      "line_no": 1,
+      "gl_account": "5010",
+      "department_id": "D01",
+      "changed_by_id": "U004",
+      "changed_at": "2026-09-02T14:06:00Z",
+      "source": "ACCEPTED_SUGGESTION"
+    }
+  ],
   "events": []
 }
 ```
 
-**DashboardSummary** (role-aware: each role sees its own queue)
+- `invoice`, `approvals`, `payments` and `events` reuse the `Invoice`,
+  `Approval`, `Payment` and `AuditEvent` shapes defined elsewhere.
+- `coding_history[].source` ∈ `EXTRACTED | ACCEPTED_SUGGESTION | MANUAL`.
+
+**DashboardSummary** (role-aware; uniform `counts` shape)
 
 ```json
 {
   "role": "APPROVER",
   "counts": {
+    "my_submissions": 0,
+    "in_review": 0,
     "pending_my_approval": 4,
-    "in_review": 2,
-    "payments_due": 1,
-    "open_findings": 3
+    "payments_due": 0,
+    "open_findings": 0,
+    "vendors_pending_review": 0
   },
   "pending_approvals": [],
   "payments_due": [],
@@ -753,7 +894,13 @@ approval chain, payment and accounting codes for the audit-ready view:
 }
 ```
 
-## 9. Workflow & invariants
+- `counts` always contains all six keys (zero where not applicable to the role),
+  so the client can type it uniformly.
+- `pending_approvals` is `Approval[]` (same shape as `GET /approvals/`).
+- `payments_due` is `Payment[]` (same shape as `GET /payments/`).
+- `recent_activity` is `AuditEvent[]`, scoped to what the role may see.
+
+## 10. Workflow & invariants
 
 Invoice transitions:
 
@@ -780,7 +927,7 @@ plus `FAILED` and `CANCELLED`. `RELEASED` is not a resting state.
 - Authorization is enforced server-side for every read and mutation; the
   frontend hiding a control is never the enforcement.
 
-## 10. Feature coverage
+## 11. Feature coverage
 
 | # | Feature | Endpoints |
 |---|---|---|
@@ -794,7 +941,10 @@ plus `FAILED` and `CANCELLED`. `RELEASED` is not a resting state.
 | 8 | Audit trail | `/audit/`, `/audit/export/`, `/invoices/{id}/audit/` |
 | 9 | Vendor management | `/vendors/…`, `/vendors/{id}/bank-changes/…` |
 
-## 11. Frontend mocking guide
+Reference data (`/departments/`, `/gl-accounts/`, `/tax-codes/`, §3) underpins
+features 3 and 4.
+
+## 12. Frontend mocking guide
 
 1. **Two success shapes only** — bare object or pagination envelope. Generate
    one MSW handler per row in this document.
@@ -814,7 +964,7 @@ plus `FAILED` and `CANCELLED`. `RELEASED` is not a resting state.
 8. **Submit returns the Invoice** — read `approvals[]` for the new chain and each
    step's `reason`; there is no separate routing call.
 
-## 12. Storage mapping notes (implementation detail, not API)
+## 13. Storage mapping notes (implementation detail, not API)
 
 - `invoice_number` (API) ↔ `Invoice.vendor_invoice_number`.
 - `id` (API) ↔ each model's natural string primary key
