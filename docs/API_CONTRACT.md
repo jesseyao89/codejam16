@@ -659,6 +659,13 @@ POST   /api/vendors/{id}/bank-changes/{change_id}/reject/  -> BankChange
 }
 ```
 
+The current read-only backend is loaded from historical bank-change records,
+which do not include lifecycle status or decision metadata. Until the controlled
+bank-change actions add those fields, `status`, `decided_by_id`, and
+`decided_at` are returned as `null`; do not infer them from callback verification.
+Follow-up: persist these fields and replace the temporary nulls when implementing
+the bank-change mutation/approval flow.
+
 ## 7. Approvals, policies & delegation (feature 6)
 
 ```

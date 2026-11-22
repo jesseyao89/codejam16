@@ -161,6 +161,8 @@ REST_FRAMEWORK = {
     ],
     # Every 4xx/5xx returns the contract error envelope (docs/API_CONTRACT.md §1.2).
     "EXCEPTION_HANDLER": "apps.accounts.exceptions.api_exception_handler",
+    "DEFAULT_PAGINATION_CLASS": "config.pagination.RelativePageNumberPagination",
+    "PAGE_SIZE": 25,
     "TEST_REQUEST_DEFAULT_FORMAT": "json",
 }
 
