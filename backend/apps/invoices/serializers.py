@@ -8,7 +8,7 @@ from apps.accounts.models import Department
 from apps.approvals.models import ApprovalStep
 from apps.invoices import findings as findings_mod
 from apps.invoices.models import GLAccount, Invoice, InvoiceLine, TaxCode
-from apps.invoices.tax import build_tax_lines
+from apps.invoices.tax import tax_lines_for_invoice
 from apps.vendors.models import Vendor
 
 
@@ -211,9 +211,7 @@ class InvoiceSerializer(serializers.ModelSerializer):
         ]
 
     def get_tax_lines(self, obj):
-        return build_tax_lines(
-            obj.gst_hst_amount, obj.pst_qst_amount, obj.ship_to_province
-        )
+        return tax_lines_for_invoice(obj)
 
     def get_requester_id(self, obj):
         return obj.requester.user_id if obj.requester else None

@@ -7,6 +7,7 @@ atomically. Pure analysis logic stays in ``automation/``.
 from __future__ import annotations
 
 import logging
+import re
 from datetime import date
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -25,10 +26,14 @@ from apps.audit.models import AuditEvent
 from apps.audit.services import record_audit
 from apps.invoices import findings as findings_mod
 from apps.invoices.models import FXRate, GLAccount, Invoice, InvoiceLine
-from apps.invoices.services import build_reference_data, resolve_vendor
+from apps.invoices.services import (
+    build_reference_data,
+    extraction_tax_codes,
+    resolve_vendor,
+)
 from apps.payments.models import Payment
 from apps.vendors.models import Contract, PurchaseOrder, Vendor
-from automation.extraction import extract_invoice
+from automation.extraction import ExtractionError, extract_invoice
 from automation.pipeline import analyze_invoice
 
 logger = logging.getLogger(__name__)
@@ -191,8 +196,9 @@ def to_invoice_data(invoice) -> dict:
 
 def analysis_extraction(invoice) -> dict:
     """Build the contract ``extraction`` shape from the persisted invoice."""
-    from apps.invoices.tax import build_tax_lines
+    from apps.invoices.tax import tax_lines_for_invoice
 
+    raw = invoice.raw_extraction if isinstance(invoice.raw_extraction, dict) else {}
     lines = [
         {
             "description": line.description,
@@ -204,15 +210,18 @@ def analysis_extraction(invoice) -> dict:
     ]
     return {
         "vendor_name": invoice.vendor.legal_name if invoice.vendor else None,
+        "vendor_tax_number": raw.get("vendor_tax_number"),
         "invoice_number": invoice.vendor_invoice_number or None,
         "invoice_date": invoice.invoice_date.isoformat() if invoice.invoice_date else None,
         "due_date": invoice.due_date.isoformat() if invoice.due_date else None,
         "currency": invoice.currency or None,
         "subtotal": str(invoice.subtotal) if invoice.subtotal is not None else None,
-        "tax_lines": build_tax_lines(
-            invoice.gst_hst_amount, invoice.pst_qst_amount, invoice.ship_to_province
-        ),
+        "tax_lines": tax_lines_for_invoice(invoice),
         "total": str(invoice.total) if invoice.total is not None else None,
+        "ship_to_province": invoice.ship_to_province or None,
+        "po_number": raw.get("po_number"),
+        "contract_reference": raw.get("contract_reference"),
+        "language": raw.get("language"),
         "line_items": lines,
     }
 
@@ -316,6 +325,7 @@ def _populate_from_extraction(invoice, extracted: dict) -> None:
     for index, item in enumerate(line_items, start=1):
         if not isinstance(item, dict):
             item = {}
+        tax_code = (item.get("tax_code") or "").upper()
         InvoiceLine.objects.create(
             invoice=invoice,
             line_no=index,
@@ -323,6 +333,28 @@ def _populate_from_extraction(invoice, extracted: dict) -> None:
             quantity=_to_decimal(item.get("quantity")),
             unit_price=_to_decimal(item.get("unit_price")),
             amount=_to_decimal(item.get("amount")),
+            gst_hst_code=(
+                tax_code if tax_code.startswith(("GST", "HST")) else ""
+            ),
+            pst_qst_code=(
+                tax_code if tax_code.startswith(("PST", "QST")) else ""
+            ),
+        )
+
+    tax_lines = extracted.get("tax_lines") or []
+    if (
+        isinstance(tax_lines, list)
+        and tax_lines
+        and invoice.gst_hst_amount is None
+        and invoice.pst_qst_amount is None
+    ):
+        _apply_tax_lines(invoice, tax_lines)
+        invoice.save(
+            update_fields=[
+                "gst_hst_amount",
+                "pst_qst_amount",
+                "raw_extraction",
+            ]
         )
 
 
@@ -410,9 +442,23 @@ def create_invoice_from_path(
 ) -> Invoice:
     """Extract from a file path and create the draft (2A behaviour)."""
     try:
-        extracted = extract_invoice(str(path))
+        extracted = extract_invoice(
+            str(path), tax_codes=extraction_tax_codes()
+        )
         if not isinstance(extracted, dict):
             raise ValueError("Extraction did not return a JSON object.")
+    except ExtractionError as exc:
+        logger.warning(
+            "Invoice extraction failed for %s (%s)", original_filename, exc.code
+        )
+        return create_invoice_with_extraction_failure(
+            actor,
+            original_filename,
+            exc.message,
+            source=source,
+            email_id=email_id,
+            code=exc.code,
+        )
     except Exception:  # noqa: BLE001 - extraction failure is a reviewable draft
         logger.exception("Invoice extraction failed for %s", original_filename)
         return create_invoice_with_extraction_failure(
@@ -432,10 +478,13 @@ def create_invoice_from_path(
 
 
 def create_invoice_from_upload(actor, file) -> Invoice:
-    """Save an upload, then extract from the saved path."""
+    """Save an upload under a generated name, then extract from that path."""
     directory = Path(settings.MEDIA_ROOT) / "invoices"
     directory.mkdir(parents=True, exist_ok=True)
-    target = directory / file.name
+    suffix = Path(file.name).suffix.lower()
+    if not re.fullmatch(r"\.[a-z0-9]{1,8}", suffix):
+        suffix = ""
+    target = directory / f"{uuid4().hex}{suffix}"
     with open(target, "wb") as handle:
         for chunk in file.chunks():
             handle.write(chunk)
@@ -455,15 +504,30 @@ def _clear_prefetch(invoice, *keys) -> None:
 def _apply_tax_lines(invoice, tax_lines) -> None:
     federal = Decimal("0")
     provincial = Decimal("0")
+    normalized = []
     for line in tax_lines or []:
+        if not isinstance(line, dict):
+            continue
         code = (line.get("tax_code") or "").upper()
         amount = _to_decimal(line.get("amount")) or Decimal("0")
-        if code in ("GST5", "HST13"):
+        if code.startswith(("GST", "HST")):
             federal += amount
-        elif code in ("PST7_BC", "QST9975"):
+        elif code.startswith(("PST", "QST")):
             provincial += amount
+        if code:
+            normalized.append(
+                {
+                    "tax_code": code,
+                    "label": line.get("label"),
+                    "rate": line.get("rate"),
+                    "amount": str(amount),
+                }
+            )
     invoice.gst_hst_amount = federal or None
     invoice.pst_qst_amount = provincial or None
+    raw = dict(invoice.raw_extraction or {})
+    raw["tax_lines"] = normalized
+    invoice.raw_extraction = raw
 
 
 def _apply_field(invoice, field: str, value) -> None:

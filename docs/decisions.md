@@ -65,6 +65,17 @@ an invented account. A provider error (missing key, timeout, malformed JSON)
 preserves historical suggestions and leaves the rest null; analysis never
 crashes.
 
+Extraction reads text PDFs directly and renders text-poor PDF pages, PNGs and
+JPEGs for a vision-capable model. It supports English and French, normalizes
+dates/amounts, drops unknown fields, preserves extracted tax lines and
+PO/contract references in `raw_extraction`, and treats document content as
+untrusted data. Unreadable/corrupt/password-protected files raise
+`EXTRACTION_UNREADABLE`; provider, timeout, malformed-JSON or unusable-output
+failures raise `EXTRACTION_FAILED`. Both become reviewable blocked drafts.
+Model, timeout, page and image limits are configured by `EXTRACTION_MODEL`,
+`EXTRACTION_TIMEOUT_SECONDS`, `EXTRACTION_MAX_PAGES`, `EXTRACTION_RENDER_DPI`
+and `EXTRACTION_MAX_IMAGE_BYTES`.
+
 ## Frontend alignment (Nov 2026)
 
 Answers to the frontend team's integration questions; encoded in
@@ -215,8 +226,10 @@ already `PAID`, and §13 normalization mappings.
 
 ## Known limitations / next steps
 
-- Extraction is **text-PDF only** (no OCR, no proven French/scan support) and
-  uses a hardcoded model name; these are tracked as discrepancies vs. AGENTS.md §9.
+- Extraction supports text PDFs plus scanned PDF pages and PNG/JPEG uploads via
+  a vision-capable model, including French. It depends on a configured provider
+  and caps rendering at 5 pages / 12 MB by default. PO/contract references are
+  captured but not yet resolved to master records.
 - Coding is **history-first with an AI fallback**: lines with no similar
   historical coding return a null suggestion for manual review. Token overlap
   (not semantic embeddings) drives the history match; unusual descriptions may
@@ -229,8 +242,8 @@ already `PAID`, and §13 normalization mappings.
   include `paid_by` (e.g. `CARD`); a standalone "already paid by card" rule
   independent of the amount/date match is still not implemented.
 - Tax validation checks arithmetic only, **not province of delivery**.
-- Vendor resolution is **exact normalized-name match**; fuzzy matching, PO and
-  contract association are not yet extracted by the AI.
+- Vendor resolution is **exact normalized-name match**; fuzzy matching and
+  PO/contract resolution are not yet implemented.
 - Inbox has no live mail source: it syncs the dataset JSON. `sync`/`ingest` are
   synchronous and call the AI extractor per attachment; `manage.py sync_inbox`
   is the CLI path for pre-demo seeding.
