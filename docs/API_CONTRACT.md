@@ -319,7 +319,18 @@ attachment always produces a reviewable `DRAFT` invoice:
 `POST /api/inbox/{id}/ingest/` returns `200` with
 `{ "email": Email, "invoices": Invoice[] }` (one draft per attachment).
 Extraction only ever returns `null` for missing values; it never guesses a
-field.
+field. It reads text PDFs directly, renders text-poor PDF pages and PNG/JPEG
+attachments for a vision-capable model, and supports English and French
+documents. The normalized extraction also carries `vendor_tax_number`,
+`ship_to_province`, `po_number`, `contract_reference`, `language`,
+`tax_lines` (`tax_code`, `label`, `rate`, `amount`) and per-line `tax_code`;
+PO/contract resolution and province-tax validation are separate steps.
+Document text is untrusted and is never executed as instructions.
+
+Extraction failures use stable finding codes: `EXTRACTION_UNREADABLE` for a
+missing/unsupported/corrupt/password-protected file, and `EXTRACTION_FAILED`
+for provider, timeout, malformed-JSON or unusable-output errors. Both create a
+reviewable `DRAFT` rather than an API error.
 
 **Email**
 
@@ -477,6 +488,7 @@ Returned by `/analyze/`, and persisted on the invoice in
   ],
   "extraction": {
     "vendor_name": "Polar Freight Lines Ltd.",
+    "vendor_tax_number": "995133220RT0001",
     "invoice_number": "INV-1042",
     "invoice_date": "2026-09-01",
     "due_date": "2026-10-01",
@@ -484,6 +496,10 @@ Returned by `/analyze/`, and persisted on the invoice in
     "subtotal": "1000.00",
     "tax_lines": [{ "tax_code": "GST5", "amount": "50.00" }],
     "total": "1050.00",
+    "ship_to_province": "ON",
+    "po_number": null,
+    "contract_reference": null,
+    "language": "en",
     "line_items": [
       { "description": "Freight YYZ-YVR", "quantity": "1", "unit_price": "1000.00", "amount": "1000.00" }
     ]

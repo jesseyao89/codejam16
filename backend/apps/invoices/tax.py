@@ -39,3 +39,34 @@ def build_tax_lines(gst_hst_amount, pst_qst_amount, province: str | None) -> lis
         )
 
     return lines
+
+
+def tax_lines_for_invoice(invoice) -> list:
+    """Prefer extraction tax lines; fall back to the lump-sum mapping."""
+    raw = invoice.raw_extraction if isinstance(invoice.raw_extraction, dict) else {}
+    extracted = raw.get("tax_lines")
+    if isinstance(extracted, list):
+        rates = tax_code_rates()
+        lines = []
+        for line in extracted:
+            if not isinstance(line, dict):
+                continue
+            code = line.get("tax_code")
+            amount = line.get("amount")
+            if not code or amount in (None, ""):
+                continue
+            code = str(code)
+            lines.append(
+                {
+                    "tax_code": code,
+                    "rate": line.get("rate") or rates.get(code),
+                    "amount": str(amount),
+                }
+            )
+        if lines:
+            return lines
+    return build_tax_lines(
+        invoice.gst_hst_amount,
+        invoice.pst_qst_amount,
+        invoice.ship_to_province,
+    )

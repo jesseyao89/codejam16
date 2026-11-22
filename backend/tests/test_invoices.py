@@ -13,7 +13,7 @@ from rest_framework.test import APIClient
 from apps.accounts.models import Department
 from apps.approvals.models import ApprovalStep
 from apps.invoices.findings import attach_finding_ids
-from apps.invoices.models import GLAccount, Invoice, InvoiceLine
+from apps.invoices.models import GLAccount, Invoice, InvoiceLine, TaxCode
 from apps.vendors.models import Vendor
 
 User = get_user_model()
@@ -166,6 +166,76 @@ def test_upload_extraction_failure_creates_blocked_draft(client, settings, tmp_p
     assert any(
         finding["code"] == "EXTRACTION_FAILED" for finding in response.data["findings"]
     )
+
+
+@pytest.mark.django_db
+def test_upload_corrupt_file_creates_unreadable_draft(client, settings, tmp_path):
+    settings.MEDIA_ROOT = tmp_path
+    upload = SimpleUploadedFile("corrupt.pdf", b"not a real pdf")
+
+    response = client.post(
+        "/api/invoices/upload/", {"file": upload}, format="multipart"
+    )
+
+    assert response.status_code == 201
+    assert response.data["status"] == "DRAFT"
+    assert response.data["validation_status"] == "BLOCKED"
+    assert any(
+        finding["code"] == "EXTRACTION_UNREADABLE"
+        for finding in response.data["findings"]
+    )
+
+
+@pytest.mark.django_db
+def test_upload_persists_extracted_tax_lines(client, settings, tmp_path):
+    settings.MEDIA_ROOT = tmp_path
+    TaxCode.objects.create(code="HST13", description="Ontario HST", rate="0.13")
+    TaxCode.objects.create(code="QST9975", description="Quebec QST", rate="0.09975")
+    upload = SimpleUploadedFile("tax.pdf", b"%PDF-1.4 fake")
+    extracted = dict(
+        EXTRACTED,
+        invoice_number="INV-TAX",
+        gst_hst=None,
+        pst_qst=None,
+        total="122.98",
+        tax_lines=[
+            {"tax_code": "HST13", "amount": "13.00"},
+            {"tax_code": "QST9975", "amount": "9.98"},
+        ],
+        line_items=[],
+    )
+
+    with mock.patch(
+        "apps.invoices.actions.extract_invoice", return_value=extracted
+    ):
+        response = client.post(
+            "/api/invoices/upload/", {"file": upload}, format="multipart"
+        )
+
+    assert response.status_code == 201
+    assert response.data["tax_lines"] == [
+        {"tax_code": "HST13", "rate": "0.13", "amount": "13.00"},
+        {"tax_code": "QST9975", "rate": "0.09975", "amount": "9.98"},
+    ]
+
+
+@pytest.mark.django_db
+def test_upload_does_not_escape_media_directory(
+    client, settings, tmp_path, vendor
+):
+    settings.MEDIA_ROOT = tmp_path
+    upload = SimpleUploadedFile("../../evil.pdf", b"%PDF-1.4 fake")
+
+    with mock.patch(
+        "apps.invoices.actions.extract_invoice", return_value=EXTRACTED
+    ):
+        response = client.post(
+            "/api/invoices/upload/", {"file": upload}, format="multipart"
+        )
+
+    assert response.status_code == 201
+    assert not (tmp_path.parent / "evil.pdf").exists()
+    assert list((tmp_path / "invoices").glob("*.pdf"))
 
 
 # --- Analyze ----------------------------------------------------------------

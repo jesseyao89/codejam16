@@ -66,7 +66,7 @@ def _write_dataset(data_dir: Path, emails, files: dict[str, bytes]):
         (data_dir / "incoming_invoices" / name).write_bytes(content)
 
 
-def _fake_extract(path):
+def _fake_extract(path, **_kwargs):
     name = Path(path).name
     number = "101" if "101" in name else "100"
     return {

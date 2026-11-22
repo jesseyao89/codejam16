@@ -13,7 +13,7 @@ from datetime import date, datetime
 from decimal import Decimal
 
 from apps.accounts.models import Department
-from apps.invoices.models import GLAccount, Invoice, InvoiceLine
+from apps.invoices.models import GLAccount, Invoice, InvoiceLine, TaxCode
 from apps.payments.models import Payment
 from apps.vendors.models import BankChange, Contract, PurchaseOrder, Vendor
 
@@ -28,6 +28,18 @@ def _iso(value):
 
 def _serialize(obj: dict) -> dict:
     return {k: _iso(v) for k, v in obj.items()}
+
+
+def extraction_tax_codes() -> list[dict]:
+    """Tax codes passed to the extraction model so it can map tax amounts."""
+    return [
+        dict(
+            code=code.code,
+            description=code.description,
+            rate=str(code.rate) if code.rate is not None else None,
+        )
+        for code in TaxCode.objects.all().order_by("code")
+    ]
 
 
 def build_reference_data(
