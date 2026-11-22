@@ -14,7 +14,7 @@ from apps.accounts.models import Department
 from apps.approvals.models import ApprovalStep
 from apps.invoices.findings import attach_finding_ids
 from apps.invoices.models import GLAccount, Invoice, InvoiceLine, TaxCode
-from apps.vendors.models import Vendor
+from apps.vendors.models import Contract, PurchaseOrder, Vendor
 
 User = get_user_model()
 
@@ -217,6 +217,112 @@ def test_upload_persists_extracted_tax_lines(client, settings, tmp_path):
         {"tax_code": "HST13", "rate": "0.13", "amount": "13.00"},
         {"tax_code": "QST9975", "rate": "0.09975", "amount": "9.98"},
     ]
+
+
+@pytest.mark.django_db
+def test_upload_resolves_extracted_po_and_contract(
+    client, settings, tmp_path, vendor
+):
+    settings.MEDIA_ROOT = tmp_path
+    vendor.country = "CA"
+    vendor.province_or_state = "ON"
+    vendor.save(update_fields=["country", "province_or_state"])
+    TaxCode.objects.create(code="HST13", description="Ontario HST", rate="0.13")
+    po = PurchaseOrder.objects.create(
+        po_id="PO-1",
+        vendor=vendor,
+        currency="CAD",
+        total_amount="1000.00",
+        status="open",
+    )
+    contract = Contract.objects.create(
+        contract_id="C001",
+        vendor=vendor,
+        currency="CAD",
+        status="active",
+        start_date="2026-01-01",
+        end_date="2026-12-31",
+        billing_type="blanket",
+    )
+    upload = SimpleUploadedFile("refs.pdf", b"%PDF-1.4 fake")
+    extracted = dict(
+        EXTRACTED,
+        po_number=po.po_id,
+        contract_reference=contract.contract_id,
+        ship_to_province="ON",
+        gst_hst="13.00",
+        total="113.00",
+        line_items=[],
+    )
+
+    with mock.patch(
+        "apps.invoices.actions.extract_invoice", return_value=extracted
+    ):
+        response = client.post(
+            "/api/invoices/upload/", {"file": upload}, format="multipart"
+        )
+
+    assert response.status_code == 201
+    assert response.data["po_id"] == "PO-1"
+    assert response.data["contract_id"] == "C001"
+    assert response.data["validation_status"] == "PASSED"
+
+
+@pytest.mark.django_db
+def test_upload_unresolved_po_reference_blocks(client, settings, tmp_path, vendor):
+    settings.MEDIA_ROOT = tmp_path
+    upload = SimpleUploadedFile("missing-po.pdf", b"%PDF-1.4 fake")
+    extracted = dict(
+        EXTRACTED,
+        po_number="PO-MISSING",
+        line_items=[],
+    )
+
+    with mock.patch(
+        "apps.invoices.actions.extract_invoice", return_value=extracted
+    ):
+        response = client.post(
+            "/api/invoices/upload/", {"file": upload}, format="multipart"
+        )
+
+    assert response.status_code == 201
+    assert response.data["po_id"] is None
+    assert response.data["validation_status"] == "BLOCKED"
+    assert any(
+        finding["code"] == "PO_NOT_FOUND"
+        for finding in response.data["findings"]
+    )
+
+
+@pytest.mark.django_db
+def test_analyze_flags_tax_mismatch(client, vendor):
+    vendor.country = "CA"
+    vendor.province_or_state = "ON"
+    vendor.save(update_fields=["country", "province_or_state"])
+    TaxCode.objects.create(code="HST13", description="Ontario HST", rate="0.13")
+    invoice = Invoice.objects.create(
+        invoice_id="AP-00001",
+        vendor=vendor,
+        vendor_invoice_number="INV-TAX",
+        invoice_date="2026-09-01",
+        currency="CAD",
+        subtotal="100.00",
+        gst_hst_amount="5.00",
+        pst_qst_amount="0.00",
+        total="105.00",
+        ship_to_province="ON",
+        status="DRAFT",
+    )
+
+    response = client.post(f"/api/invoices/{invoice.invoice_id}/analyze/")
+
+    assert response.status_code == 200
+    assert response.data["validation_status"] == "BLOCKED"
+    assert any(
+        finding["code"] == "TAX_RATE_MISMATCH"
+        and finding["severity"] == "BLOCK"
+        for finding in response.data["findings"]
+    )
 
 
 @pytest.mark.django_db

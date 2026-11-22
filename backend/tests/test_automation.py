@@ -180,6 +180,228 @@ def test_fraud_flags_recent_unverified_bank_change():
     assert any(f["code"] == "UNVERIFIED_BANK_CHANGE" for f in findings)
 
 
+# --- PO / contract matching -------------------------------------------------
+
+
+def test_po_required_but_missing_warns():
+    invoice = _invoice(vendor_requires_po="yes")
+    findings = match_purchase_order(invoice, [])
+    assert any(
+        finding["code"] == "PO_REQUIRED_MISSING"
+        and finding["severity"] == "WARNING"
+        for finding in findings
+    )
+
+
+def test_po_reference_not_found_blocks():
+    invoice = _invoice(po_reference="PO-DOES-NOT-EXIST")
+    findings = match_purchase_order(invoice, [])
+    assert any(
+        finding["code"] == "PO_NOT_FOUND"
+        and finding["severity"] == "BLOCK"
+        for finding in findings
+    )
+
+
+def test_po_cumulative_exceeded_blocks():
+    invoice = _invoice(
+        invoice_id="AP-2",
+        po_id="PO-1",
+        total="60.00",
+        currency="CAD",
+    )
+    purchase_orders = [
+        {
+            "po_id": "PO-1",
+            "vendor_id": "V015",
+            "currency": "CAD",
+            "total_amount": "100.00",
+        }
+    ]
+    historical = [
+        {
+            "invoice_id": "AP-1",
+            "po_id": "PO-1",
+            "currency": "CAD",
+            "total": "50.00",
+        }
+    ]
+    findings = match_purchase_order(invoice, purchase_orders, historical)
+    assert any(
+        finding["code"] == "PO_CUMULATIVE_EXCEEDED"
+        and finding["severity"] == "BLOCK"
+        for finding in findings
+    )
+
+
+def test_po_cumulative_excludes_the_current_invoice():
+    invoice = _invoice(
+        invoice_id="AP-2",
+        po_id="PO-1",
+        total="60.00",
+        currency="CAD",
+    )
+    purchase_orders = [
+        {
+            "po_id": "PO-1",
+            "vendor_id": "V015",
+            "currency": "CAD",
+            "total_amount": "110.00",
+        }
+    ]
+    historical = [
+        {
+            "invoice_id": "AP-1",
+            "po_id": "PO-1",
+            "currency": "CAD",
+            "total": "50.00",
+        },
+        {
+            "invoice_id": "AP-2",
+            "po_id": "PO-1",
+            "currency": "CAD",
+            "total": "60.00",
+        },
+    ]
+    findings = match_purchase_order(invoice, purchase_orders, historical)
+    assert not any(
+        finding["code"] == "PO_CUMULATIVE_EXCEEDED"
+        for finding in findings
+    )
+
+
+def _contract(**overrides):
+    contract = {
+        "contract_id": "C001",
+        "vendor_id": "V015",
+        "currency": "CAD",
+        "status": "active",
+        "start_date": "2026-01-01",
+        "end_date": "2026-12-31",
+        "billing_type": "rate_card",
+        "monthly_fee": None,
+        "hourly_rate_cap": "100.00",
+        "not_to_exceed_monthly": "1000.00",
+    }
+    contract.update(overrides)
+    return contract
+
+
+def test_contract_reference_not_found_blocks():
+    invoice = _invoice(contract_reference="C-DOES-NOT-EXIST")
+    findings = match_contract(invoice, [])
+    assert any(
+        finding["code"] == "CONTRACT_NOT_FOUND"
+        and finding["severity"] == "BLOCK"
+        for finding in findings
+    )
+
+
+def test_contract_rate_cap_exceeded_warns():
+    invoice = _invoice(
+        contract_id="C001",
+        line_items=[
+            {"line_no": 1, "description": "Consulting", "unit_price": "150.00", "amount": "150.00"}
+        ],
+    )
+    findings = match_contract(invoice, [_contract()])
+    assert any(
+        finding["code"] == "CONTRACT_RATE_EXCEEDED"
+        and finding["severity"] == "WARNING"
+        for finding in findings
+    )
+
+
+def test_contract_monthly_cap_exceeded_blocks():
+    invoice = _invoice(
+        invoice_id="AP-2",
+        contract_id="C001",
+        invoice_date="2026-06-15",
+        subtotal="300.00",
+        total="315.00",
+    )
+    historical = [
+        {
+            "invoice_id": "AP-1",
+            "contract_id": "C001",
+            "invoice_date": "2026-06-01",
+            "subtotal": "800.00",
+        }
+    ]
+    findings = match_contract(invoice, [_contract()], historical)
+    assert any(
+        finding["code"] == "CONTRACT_MONTHLY_CAP_EXCEEDED"
+        and finding["severity"] == "BLOCK"
+        for finding in findings
+    )
+
+
+def test_contract_monthly_cap_excludes_current_invoice():
+    invoice = _invoice(
+        invoice_id="AP-2",
+        contract_id="C001",
+        invoice_date="2026-06-15",
+        subtotal="300.00",
+        total="315.00",
+    )
+    historical = [
+        {
+            "invoice_id": "AP-1",
+            "contract_id": "C001",
+            "invoice_date": "2026-06-01",
+            "subtotal": "700.00",
+        },
+        {
+            "invoice_id": "AP-2",
+            "contract_id": "C001",
+            "invoice_date": "2026-06-15",
+            "subtotal": "300.00",
+        },
+    ]
+    findings = match_contract(invoice, [_contract()], historical)
+    assert not any(
+        finding["code"] == "CONTRACT_MONTHLY_CAP_EXCEEDED"
+        for finding in findings
+    )
+
+
+def test_card_invoice_with_different_number_warns():
+    invoice = _invoice(invoice_number="INV-NEW")
+    historical = [
+        {
+            "invoice_id": "AP-1",
+            "vendor_id": "V015",
+            "invoice_number": "INV-OLD",
+            "invoice_date": "2026-09-20",
+            "currency": "CAD",
+            "total": "105.00",
+            "payment_method": "CARD",
+        }
+    ]
+    findings = detect_duplicates(invoice, historical)
+    assert any(
+        finding["code"] == "CARD_INVOICE"
+        and finding["severity"] == "WARNING"
+        for finding in findings
+    )
+
+
+def test_card_invoice_outside_window_ignored():
+    invoice = _invoice(invoice_number="INV-NEW")
+    historical = [
+        {
+            "invoice_id": "AP-1",
+            "vendor_id": "V015",
+            "invoice_number": "INV-OLD",
+            "invoice_date": "2026-01-01",
+            "currency": "CAD",
+            "total": "105.00",
+            "payment_method": "CARD",
+        }
+    ]
+    assert detect_duplicates(invoice, historical) == []
+
+
 # --- Per-line coding --------------------------------------------------------
 
 

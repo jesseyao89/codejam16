@@ -224,6 +224,25 @@ already `PAID`, and §13 normalization mappings.
   queries (`lines` existence, per-step user lookups); fine at 50 invoices/month
   and small at 100x, but worth caching if submit is ever batched.
 
+## Validation and matching (Nov 2026)
+
+- **Tax.** `automation/tax.py` computes expected tax from the tax-code master
+  and place of supply. ON uses HST; BC adds PST only to `goods` line types; QC
+  adds QST; other Canadian provinces use GST; US/foreign and insurance vendors
+  expect no Canadian tax. Wrong/missing tax and province-inapplicable codes are
+  `BLOCK`; missing province or tax-code master is `WARNING`.
+- **PO/contract resolution.** Extracted `po_number`/`contract_reference` are
+  resolved by exact/normalized ID before validation. Unresolved references are
+  `BLOCK`; a `requires_po` vendor with no PO is `WARNING`.
+- **Cumulative limits.** PO spend and contract monthly caps sum historical
+  invoices on the same record, excluding the invoice being analyzed. Exceeding a
+  cap is `BLOCK`; rate-card lines above the hourly cap are `WARNING`.
+- **Card reuse.** A historical card-paid invoice with the same vendor, amount
+  and currency within 90 days produces `CARD_INVOICE` (`WARNING`) even when the
+  invoice number differs.
+- **Finding codes** are stable; messages explain expected/actual amounts and
+  reference IDs in `evidence`.
+
 ## Known limitations / next steps
 
 - Extraction supports text PDFs plus scanned PDF pages and PNG/JPEG uploads via
@@ -241,9 +260,17 @@ already `PAID`, and §13 normalization mappings.
   method (joined from `Payment` in `build_reference_data`), so duplicate findings
   include `paid_by` (e.g. `CARD`); a standalone "already paid by card" rule
   independent of the amount/date match is still not implemented.
-- Tax validation checks arithmetic only, **not province of delivery**.
-- Vendor resolution is **exact normalized-name match**; fuzzy matching and
-  PO/contract resolution are not yet implemented.
+- Tax validation uses the supplied tax-code rates and the **place of supply**:
+  ON HST; BC GST plus PST on goods lines; QC GST plus QST; other Canadian
+  provinces GST; US/foreign and insurance vendors no Canadian tax. HST rates for
+  Atlantic provinces and complex exempt supplies are not modelled beyond the
+  supplied codes.
+- Vendor resolution is **exact normalized-name match**. PO/contract references
+  are resolved by exact/normalized ID; fuzzy reference matching is not yet
+  implemented.
+- PO/contract cumulative checks count historical invoices on the same record;
+  very large histories should eventually be aggregated in SQL rather than
+  scanned per analysis.
 - Inbox has no live mail source: it syncs the dataset JSON. `sync`/`ingest` are
   synchronous and call the AI extractor per attachment; `manage.py sync_inbox`
   is the CLI path for pre-demo seeding.

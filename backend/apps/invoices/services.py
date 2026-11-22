@@ -68,8 +68,12 @@ def build_reference_data(
         "vendor_id",
         "vendor_invoice_number",
         "total",
+        "subtotal",
         "currency",
         "invoice_date",
+        "po_id",
+        "contract_id",
+        "status",
     ):
         item = _serialize(row)
         item["invoice_number"] = item["vendor_invoice_number"]
@@ -94,6 +98,7 @@ def build_reference_data(
             vendor_id=po.vendor_id,
             currency=po.currency,
             total_amount=str(po.total_amount) if po.total_amount is not None else None,
+            status=po.status,
         )
         for po in PurchaseOrder.objects.all()
     ]
@@ -108,6 +113,20 @@ def build_reference_data(
             end_date=c.end_date.isoformat() if c.end_date else None,
             billing_type=c.billing_type,
             monthly_fee=str(c.monthly_fee) if c.monthly_fee is not None else None,
+            hourly_rate_cap=(
+                str(c.hourly_rate_cap) if c.hourly_rate_cap is not None else None
+            ),
+            fuel_surcharge_cap_pct=(
+                str(c.fuel_surcharge_cap_pct)
+                if c.fuel_surcharge_cap_pct is not None
+                else None
+            ),
+            not_to_exceed_monthly=(
+                str(c.not_to_exceed_monthly)
+                if c.not_to_exceed_monthly is not None
+                else None
+            ),
+            auto_renew=c.auto_renew,
         )
         for c in Contract.objects.all()
     ]
@@ -151,6 +170,17 @@ def build_reference_data(
         for d in Department.objects.all()
     ]
 
+    tax_codes = [
+        dict(
+            code=code.code,
+            description=code.description,
+            rate=str(code.rate) if code.rate is not None else None,
+            applies_to=code.applies_to,
+            recoverable=code.recoverable,
+        )
+        for code in TaxCode.objects.all().order_by("code")
+    ]
+
     return {
         "historical_invoices": historical,
         "historical_lines": historical_lines,
@@ -159,6 +189,7 @@ def build_reference_data(
         "contracts": contracts,
         "gl_accounts": gl_accounts,
         "departments": departments,
+        "tax_codes": tax_codes,
     }
 
 
@@ -170,6 +201,64 @@ def _normalize_name(value) -> str:
     return re.sub(r"\s+", " ", value).strip()
 
 
+def vendor_profile(vendor) -> dict:
+    """Fields the pure checks need from a vendor master record."""
+    if vendor is None:
+        return {}
+    return {
+        "vendor_country": vendor.country or None,
+        "vendor_province": vendor.province_or_state or None,
+        "vendor_category": vendor.category or None,
+        "vendor_status": vendor.status or None,
+        "vendor_requires_po": vendor.requires_po or None,
+    }
+
+
+def _reference_candidates(value) -> list[str]:
+    text = str(value or "").strip()
+    if not text:
+        return []
+    candidates = [text]
+    compact = re.sub(r"\s+", "", text)
+    if compact not in candidates:
+        candidates.append(compact)
+    dashed = re.sub(r"\s+", "-", text)
+    if dashed not in candidates:
+        candidates.append(dashed)
+    return candidates
+
+
+def resolve_purchase_order(reference):
+    """Exact/normalized lookup; never invents a PO association."""
+    for candidate in _reference_candidates(reference):
+        match = PurchaseOrder.objects.filter(po_id__iexact=candidate).first()
+        if match is not None:
+            return match
+    return None
+
+
+def resolve_contract(reference):
+    """Exact/normalized lookup; never invents a contract association."""
+    for candidate in _reference_candidates(reference):
+        match = Contract.objects.filter(contract_id__iexact=candidate).first()
+        if match is not None:
+            return match
+    return None
+
+
+def resolve_references(extracted: dict) -> dict:
+    """Attach resolved PO/contract IDs to an extracted dict when possible."""
+    if extracted.get("po_number") and not extracted.get("po_id"):
+        po = resolve_purchase_order(extracted.get("po_number"))
+        if po is not None:
+            extracted["po_id"] = po.po_id
+    if extracted.get("contract_reference") and not extracted.get("contract_id"):
+        contract = resolve_contract(extracted.get("contract_reference"))
+        if contract is not None:
+            extracted["contract_id"] = contract.contract_id
+    return extracted
+
+
 def resolve_vendor(extracted: dict) -> dict:
     """Best-effort map of the extracted ``vendor_name`` to a master ``vendor_id``.
 
@@ -178,6 +267,14 @@ def resolve_vendor(extracted: dict) -> dict:
     resolution those checks silently no-op. Exact normalized match only for
     now; fuzzy/near-match is a follow-up.
     """
+    if extracted.get("vendor_id"):
+        vendor = Vendor.objects.filter(
+            vendor_id=extracted["vendor_id"]
+        ).first()
+        if vendor is not None:
+            extracted.update(vendor_profile(vendor))
+        return extracted
+
     name = extracted.get("vendor_name")
     if not name:
         return extracted
@@ -188,5 +285,6 @@ def resolve_vendor(extracted: dict) -> dict:
     for vendor in Vendor.objects.all():
         if _normalize_name(vendor.legal_name) == target:
             extracted["vendor_id"] = vendor.vendor_id
+            extracted.update(vendor_profile(vendor))
             break
     return extracted

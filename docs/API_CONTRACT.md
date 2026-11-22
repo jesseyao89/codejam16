@@ -564,15 +564,35 @@ MISSING_FIELD               INVALID_AMOUNT             TOTAL_MISMATCH
 EXTRACTION_FAILED           EXTRACTION_UNREADABLE      VENDOR_UNKNOWN
 VENDOR_ON_HOLD              TAX_RATE_MISMATCH          TAX_PROVINCE_MISMATCH
 EXACT_DUPLICATE             POSSIBLE_DUPLICATE         CARD_INVOICE
-PO_NOT_FOUND                PO_VENDOR_MISMATCH         PO_CURRENCY_MISMATCH
-PO_AMOUNT_EXCEEDED          CONTRACT_NOT_FOUND         CONTRACT_VENDOR_MISMATCH
-CONTRACT_CURRENCY_MISMATCH  CONTRACT_INACTIVE          CONTRACT_DATE_OUTSIDE_TERM
-CONTRACT_FEE_EXCEEDED       UNVERIFIED_BANK_CHANGE
+PO_NOT_FOUND                PO_REQUIRED_MISSING        PO_VENDOR_MISMATCH
+PO_CURRENCY_MISMATCH        PO_AMOUNT_EXCEEDED         PO_CUMULATIVE_EXCEEDED
+CONTRACT_NOT_FOUND          CONTRACT_VENDOR_MISMATCH   CONTRACT_CURRENCY_MISMATCH
+CONTRACT_INACTIVE           CONTRACT_DATE_OUTSIDE_TERM CONTRACT_FEE_EXCEEDED
+CONTRACT_RATE_EXCEEDED      CONTRACT_MONTHLY_CAP_EXCEEDED
+UNVERIFIED_BANK_CHANGE
 ```
 
 Duplicate severities: `EXACT_DUPLICATE` (same vendor + same number once
 formatting is normalized, including reformatted numbers) is `BLOCK`;
-`POSSIBLE_DUPLICATE` (near amount/date, or already paid by card) is `WARNING`.
+`POSSIBLE_DUPLICATE` (near amount/date, or already paid by card) and
+`CARD_INVOICE` (same vendor/amount within the card window) are `WARNING`.
+
+Validation rules:
+
+- Tax is checked against the **place of supply** (`ship_to_province`), using
+  the supplied tax-code rates. ON uses HST; BC adds PST on `goods` lines only;
+  QC adds QST; other Canadian provinces use GST; US/foreign vendors and
+  insurance vendors are expected to charge no Canadian tax. Missing province or
+  missing tax-code data is a `WARNING`; wrong/missing tax, a tax code not valid
+  for the province, or tax charged to an exempt/foreign vendor is `BLOCK`.
+- A PO/contract reference extracted from the document is resolved to the master
+  record. A reference that cannot be resolved is `BLOCK`
+  (`PO_NOT_FOUND`/`CONTRACT_NOT_FOUND`). A vendor with `requires_po=yes` and no
+  PO is `WARNING` (`PO_REQUIRED_MISSING`).
+- Cumulative PO spend and contract monthly caps include historical invoices on
+  the same PO/contract and exclude the invoice being analyzed. Exceeding either
+  cap is `BLOCK`.
+- Rate-card lines above the contract hourly-rate cap are `WARNING`.
 
 ### 5.4 Resolving a finding
 

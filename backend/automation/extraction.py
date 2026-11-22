@@ -373,6 +373,7 @@ def _normalize_line_items(value, tax_codes: list[dict] | None) -> list[dict]:
                 "unit_price": _decimal_string(raw.get("unit_price")),
                 "amount": _decimal_string(raw.get("amount")),
                 "tax_code": _line_tax_code(raw.get("tax_code"), tax_codes),
+                "line_type": _text(raw.get("line_type"), 32),
             }
         )
     return lines
@@ -507,7 +508,8 @@ def _instructions(tax_codes: list[dict] | None) -> str:
         "invoice_date, due_date, currency, subtotal, gst_hst, pst_qst, total, "
         "ship_to_province, po_number, contract_reference, language, tax_lines "
         "(tax_code, label, rate, amount) and line_items (description, "
-        "quantity, unit_price, amount, tax_code)." + tax_hint
+        "line_items (description, quantity, unit_price, amount, tax_code, "
+        "line_type as goods or services)." + tax_hint
     )
 
 

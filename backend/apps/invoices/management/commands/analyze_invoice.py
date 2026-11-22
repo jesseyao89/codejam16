@@ -5,6 +5,7 @@ from django.core.management.base import BaseCommand, CommandError
 from apps.invoices.services import (
     build_reference_data,
     extraction_tax_codes,
+    resolve_references,
     resolve_vendor,
 )
 from automation.extraction import extract_invoice
@@ -26,7 +27,7 @@ class Command(BaseCommand):
         except Exception as exc:  # noqa: BLE001 - surface a clean CLI error
             raise CommandError(f"Extraction failed: {exc}") from exc
 
-        extracted = resolve_vendor(extracted)
+        extracted = resolve_references(resolve_vendor(extracted))
         reference = build_reference_data()
         result = analyze_invoice(extracted, reference)
 
