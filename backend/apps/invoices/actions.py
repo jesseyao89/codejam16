@@ -22,6 +22,7 @@ from apps.audit.services import record_audit
 from apps.invoices import findings as findings_mod
 from apps.invoices.models import GLAccount, Invoice, InvoiceLine
 from apps.invoices.services import build_reference_data, resolve_vendor
+from apps.payments.models import Payment
 from apps.vendors.models import Contract, PurchaseOrder, Vendor
 from automation.extraction import extract_invoice
 from automation.pipeline import analyze_invoice
@@ -76,6 +77,46 @@ def visible_invoices(user):
     if user.role == "EMPLOYEE":
         return queryset.filter(requester=user)
     return queryset.none()
+
+
+def dashboard_summary(user) -> dict:
+    """Role-aware dashboard counts and queues (contract §9)."""
+    visible = visible_invoices(user)
+    visible_ids = visible.values_list("invoice_id", flat=True)
+
+    pending_approvals = (
+        ApprovalStep.objects.filter(
+            approver=user,
+            action="",
+            invoice__status=Invoice.Status.PENDING_APPROVAL,
+        )
+        .select_related("approver", "invoice")
+        .order_by("invoice_id", "step_no")
+    )
+    payments_due = Payment.objects.filter(
+        status__in=("PREPARED", "SCHEDULED", "scheduled", "outstanding"),
+        invoice_id__in=visible_ids,
+    )
+
+    return {
+        "role": user.role,
+        "counts": {
+            "my_submissions": Invoice.objects.filter(requester=user).count(),
+            "in_review": visible.filter(status=Invoice.Status.REVIEW).count(),
+            "pending_my_approval": pending_approvals.count(),
+            "payments_due": payments_due.count(),
+            "open_findings": visible.filter(
+                validation_status__in=("WARNING", "BLOCKED")
+            ).count(),
+            "vendors_pending_review": Vendor.objects.filter(
+                status="pending_review"
+            ).count(),
+        },
+        "pending_approvals": pending_approvals,
+        # Populated by the payments slice; the dashboard UI reads the count.
+        "payments_due": [],
+        "recent_activity": [],
+    }
 
 
 # --- Analysis ---------------------------------------------------------------

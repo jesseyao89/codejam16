@@ -9,6 +9,7 @@ urlpatterns = [
     path("departments/", views.DepartmentListView.as_view(), name="departments"),
     path("gl-accounts/", views.GLAccountListView.as_view(), name="gl-accounts"),
     path("tax-codes/", views.TaxCodeListView.as_view(), name="tax-codes"),
+    path("dashboard/", views.DashboardView.as_view(), name="dashboard"),
     # Invoices (contract §4, §5)
     path("invoices/", views.InvoiceListView.as_view(), name="invoice-list"),
     path("invoices/upload/", views.InvoiceUploadView.as_view(), name="invoice-upload"),

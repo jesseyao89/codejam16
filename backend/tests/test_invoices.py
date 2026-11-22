@@ -8,6 +8,7 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from rest_framework.test import APIClient
 
 from apps.accounts.models import Department
+from apps.approvals.models import ApprovalStep
 from apps.invoices.findings import attach_finding_ids
 from apps.invoices.models import GLAccount, Invoice, InvoiceLine
 from apps.vendors.models import Vendor
@@ -327,3 +328,69 @@ def test_submit_from_approved_is_invalid_state(client, ap_clerk):
 
     assert response.status_code == 409
     assert response.data["error"]["code"] == "INVALID_STATE_TRANSITION"
+
+
+# --- Dashboard --------------------------------------------------------------
+
+
+@pytest.mark.django_db
+def test_dashboard_returns_uniform_counts(client, ap_clerk):
+    Invoice.objects.create(
+        invoice_id="AP-00001",
+        requester=ap_clerk,
+        status="REVIEW",
+        validation_status="WARNING",
+    )
+
+    response = client.get("/api/dashboard/")
+
+    assert response.status_code == 200
+    data = response.data
+    assert data["role"] == "AP_CLERK"
+    assert set(data["counts"]) == {
+        "my_submissions",
+        "in_review",
+        "pending_my_approval",
+        "payments_due",
+        "open_findings",
+        "vendors_pending_review",
+    }
+    assert data["counts"]["my_submissions"] == 1
+    assert data["counts"]["in_review"] == 1
+    assert data["counts"]["open_findings"] == 1
+    assert data["pending_approvals"] == []
+    assert data["payments_due"] == []
+    assert data["recent_activity"] == []
+
+
+@pytest.mark.django_db
+def test_dashboard_shows_pending_approvals_for_approver(db):
+    approver = User.objects.create_user(
+        username="U007",
+        user_id="U007",
+        password="x",
+        role=User.Role.APPROVER,
+        status=User.Status.ACTIVE,
+    )
+    dept = Department.objects.create(
+        department_id="D01", name="Operations", manager=approver
+    )
+    invoice = Invoice.objects.create(
+        invoice_id="AP-00001", status="PENDING_APPROVAL", department=dept
+    )
+    ApprovalStep.objects.create(
+        invoice=invoice,
+        step_no=1,
+        approver=approver,
+        approver_role="APPROVER",
+        action="",
+    )
+
+    api = APIClient()
+    api.force_authenticate(user=approver)
+    response = api.get("/api/dashboard/")
+
+    assert response.status_code == 200
+    assert response.data["counts"]["pending_my_approval"] == 1
+    assert len(response.data["pending_approvals"]) == 1
+    assert response.data["pending_approvals"][0]["status"] == "PENDING"
