@@ -16,6 +16,7 @@ def role_required(*roles):
             return bool(
                 user
                 and user.is_authenticated
+                and user.is_active
                 and user.role in allowed
             )
 

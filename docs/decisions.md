@@ -106,6 +106,28 @@ Contract updates applied to `docs/API_CONTRACT.md`: §7 filter list (`actionable
 plus `mine` vs `actionable` semantics), §8 release refusal when the invoice is
 already `PAID`, and §13 normalization mappings.
 
+## Inbox (Nov 2026)
+
+- **Email metadata is stored; attachment files are not.** `Email` +
+  `EmailAttachment` mirror the inbox source (`inbox/emails.json` in dev); files
+  stay on disk. The DB holds classification/status/links so the API can list,
+  filter, ingest, dismiss and audit.
+- **The attachment is the ingestion unit.** One draft per attachment (the brief
+  says "each email attachment"), so an email with two invoice PDFs produces two
+  drafts. `EmailAttachment.invoice` + status carry the links; a single
+  `Email.invoice` was insufficient (EM-029 has invoices 279 and 281).
+- **Classification is deterministic.** Filename/subject/body heuristics classify
+  emails as INVOICE / NOT_INVOICE / UNCERTAIN; non-invoices and no-attachment
+  emails are ROUTED and never drafted. AI classification can layer on later.
+- **Sync vs ingest.** `sync` reloads/classifies and auto-ingests invoice emails;
+  `ingest` handles one email (all attachments, or one by filename) and is
+  idempotent per attachment. `manage.py sync_inbox` runs the same service from
+  the CLI for demo seeding (synchronous; calls the AI extractor).
+- **Failures are reviewable.** Missing/unreadable attachments produce a draft
+  with `EXTRACTION_UNREADABLE`; extraction failures produce `EXTRACTION_FAILED`.
+  PNG scans currently fail text extraction and land as blocked drafts (OCR is a
+  later hardening item).
+
 ## Known limitations / next steps
 
 - Extraction is **text-PDF only** (no OCR, no proven French/scan support) and
@@ -120,3 +142,6 @@ already `PAID`, and §13 normalization mappings.
 - Tax validation checks arithmetic only, **not province of delivery**.
 - Vendor resolution is **exact normalized-name match**; fuzzy matching, PO and
   contract association are not yet extracted by the AI.
+- Inbox has no live mail source: it syncs the dataset JSON. `sync`/`ingest` are
+  synchronous and call the AI extractor per attachment; `manage.py sync_inbox`
+  is the CLI path for pre-demo seeding.

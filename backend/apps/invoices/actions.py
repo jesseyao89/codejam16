@@ -6,6 +6,7 @@ atomically. Pure analysis logic stays in ``automation/``.
 
 from __future__ import annotations
 
+import logging
 from datetime import date
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -29,6 +30,8 @@ from apps.payments.models import Payment
 from apps.vendors.models import Contract, PurchaseOrder, Vendor
 from automation.extraction import extract_invoice
 from automation.pipeline import analyze_invoice
+
+logger = logging.getLogger(__name__)
 
 # Roles allowed to edit/correct invoices (contract §5.5, §2.2).
 _EDIT_ROLES = {"AP_CLERK", "FINANCE_MANAGER", "CONTROLLER"}
@@ -247,7 +250,12 @@ def _populate_from_extraction(invoice, extracted: dict) -> None:
     _apply_fx(invoice)
     invoice.save()
 
-    for index, item in enumerate(extracted.get("line_items") or [], start=1):
+    line_items = extracted.get("line_items") or []
+    if not isinstance(line_items, list):
+        line_items = []
+    for index, item in enumerate(line_items, start=1):
+        if not isinstance(item, dict):
+            item = {}
         InvoiceLine.objects.create(
             invoice=invoice,
             line_no=index,
@@ -258,7 +266,14 @@ def _populate_from_extraction(invoice, extracted: dict) -> None:
         )
 
 
-def create_invoice_from_extraction(actor, extracted: dict, original_filename: str) -> Invoice:
+def create_invoice_from_extraction(
+    actor,
+    extracted: dict,
+    original_filename: str,
+    *,
+    source: str = "upload",
+    email_id: str | None = None,
+) -> Invoice:
     with transaction.atomic():
         invoice = Invoice.objects.create(
             invoice_id=next_invoice_id(),
@@ -272,29 +287,24 @@ def create_invoice_from_extraction(actor, extracted: dict, original_filename: st
             "INVOICE_UPLOADED",
             "INVOICE",
             invoice.invoice_id,
-            after={"status": invoice.status, "source_file": original_filename},
+            after={
+                "status": invoice.status,
+                "source_file": original_filename,
+                "source": source,
+                "email_id": email_id,
+            },
         )
     return invoice
 
 
-def create_invoice_from_upload(actor, file) -> Invoice:
-    """Save an upload, run extraction, and create the draft (2A behaviour)."""
-    directory = Path(settings.MEDIA_ROOT) / "invoices"
-    directory.mkdir(parents=True, exist_ok=True)
-    target = directory / file.name
-    with open(target, "wb") as handle:
-        for chunk in file.chunks():
-            handle.write(chunk)
-
-    try:
-        extracted = extract_invoice(str(target))
-    except Exception as exc:  # noqa: BLE001 - extraction failure is a reviewable draft
-        return create_invoice_with_extraction_failure(actor, file.name, str(exc)[:200])
-    return create_invoice_from_extraction(actor, extracted, file.name)
-
-
 def create_invoice_with_extraction_failure(
-    actor, original_filename: str, message: str
+    actor,
+    original_filename: str,
+    message: str,
+    *,
+    source: str = "upload",
+    email_id: str | None = None,
+    code: str = "EXTRACTION_FAILED",
 ) -> Invoice:
     with transaction.atomic():
         invoice = Invoice.objects.create(
@@ -303,10 +313,14 @@ def create_invoice_with_extraction_failure(
             requester=actor,
         )
         finding = {
-            "code": "EXTRACTION_FAILED",
+            "code": code,
             "severity": "BLOCK",
             "message": message,
-            "evidence": {"source_file": original_filename},
+            "evidence": {
+                "source_file": original_filename,
+                "source": source,
+                "email_id": email_id,
+            },
         }
         invoice.findings = findings_mod.attach_finding_ids([finding])
         invoice.validation_status = "BLOCKED"
@@ -316,9 +330,56 @@ def create_invoice_with_extraction_failure(
             "INVOICE_UPLOADED",
             "INVOICE",
             invoice.invoice_id,
-            after={"status": invoice.status, "source_file": original_filename},
+            after={
+                "status": invoice.status,
+                "source_file": original_filename,
+                "source": source,
+                "email_id": email_id,
+            },
         )
     return invoice
+
+
+def create_invoice_from_path(
+    actor,
+    path,
+    original_filename: str,
+    *,
+    source: str = "upload",
+    email_id: str | None = None,
+) -> Invoice:
+    """Extract from a file path and create the draft (2A behaviour)."""
+    try:
+        extracted = extract_invoice(str(path))
+        if not isinstance(extracted, dict):
+            raise ValueError("Extraction did not return a JSON object.")
+    except Exception:  # noqa: BLE001 - extraction failure is a reviewable draft
+        logger.exception("Invoice extraction failed for %s", original_filename)
+        return create_invoice_with_extraction_failure(
+            actor,
+            original_filename,
+            "Extraction failed; the document needs manual review.",
+            source=source,
+            email_id=email_id,
+        )
+    return create_invoice_from_extraction(
+        actor,
+        extracted,
+        original_filename,
+        source=source,
+        email_id=email_id,
+    )
+
+
+def create_invoice_from_upload(actor, file) -> Invoice:
+    """Save an upload, then extract from the saved path."""
+    directory = Path(settings.MEDIA_ROOT) / "invoices"
+    directory.mkdir(parents=True, exist_ok=True)
+    target = directory / file.name
+    with open(target, "wb") as handle:
+        for chunk in file.chunks():
+            handle.write(chunk)
+    return create_invoice_from_path(actor, target, file.name, source="upload")
 
 
 # --- Patch / resolve / submit -----------------------------------------------
