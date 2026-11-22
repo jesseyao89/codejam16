@@ -41,6 +41,14 @@ class SelfApprovalBlocked(APIException):
     default_detail = "You cannot approve an invoice you requested."
     default_code = "SELF_APPROVAL_BLOCKED"
 
+
+class LimitExceeded(APIException):
+    """Raised when a release exceeds the actor's CAD limit (409)."""
+
+    status_code = 409
+    default_detail = "Amount exceeds the actor's release limit."
+    default_code = "LIMIT_EXCEEDED"
+
 # Status -> stable contract code. Unknown 4xx fall back to VALIDATION_ERROR.
 _STATUS_CODES = {
     400: "VALIDATION_ERROR",

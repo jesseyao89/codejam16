@@ -67,6 +67,7 @@ class Payment(models.Model):
         on_delete=models.SET_NULL,
         related_name="released_payments",
     )
+    created_at = models.DateTimeField(auto_now_add=True, null=True, blank=True)
 
     def __str__(self) -> str:
         return self.payment_id
