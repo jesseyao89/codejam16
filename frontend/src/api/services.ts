@@ -411,6 +411,25 @@ export interface AnalysisResponse {
 }
 
 export interface InvoicePatch {
+  vendor_id?: string | null
+  invoice_number?: string
+  invoice_date?: string | null
+  received_date?: string | null
+  due_date?: string | null
+  currency?: string
+  subtotal?: string | null
+  total?: string | null
+  tax_lines?: Array<{
+    tax_code: string
+    label?: string
+    rate?: string
+    amount: string
+  }>
+  ship_to_province?: string | null
+  department_id?: string | null
+  requester_id?: string | null
+  po_id?: string | null
+  contract_id?: string | null
   lines?: Array<{
     line_no: number
     gl_account?: string | null
@@ -607,6 +626,11 @@ export const vendorService = {
   list: (params: VendorListParams = {}) =>
     api.get<PaginatedResponse<VendorDetail>>(
       `/vendors/${buildQuery(params)}`
+    ),
+
+  listAll: (params: VendorListParams = {}) =>
+    fetchAllPages((page) =>
+      vendorService.list({ ...params, page, page_size: ALL_PAGES_SIZE })
     ),
 
   get: (id: string) =>

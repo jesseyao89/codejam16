@@ -49,6 +49,7 @@ OPERATORS_BY_TYPE = {
 }
 
 ROLES = {"APPROVER", "FINANCE_MANAGER", "CONTROLLER"}
+ROLE_PRIORITY = {"APPROVER": 0, "FINANCE_MANAGER": 1, "CONTROLLER": 2}
 
 
 def coerce_value(value, field_type: str):
@@ -276,8 +277,15 @@ def matching_policies(invoice) -> list[ApprovalPolicy]:
 
 def _department_manager(invoice, exclude=None):
     manager = invoice.department.manager if invoice.department else None
-    if manager is None and invoice.requester and invoice.requester.manager:
-        manager = invoice.requester.manager
+    if (
+        manager is None
+        and invoice.requester
+        and invoice.requester.role in (User.Role.EMPLOYEE, User.Role.APPROVER)
+        and invoice.requester.department
+    ):
+        # Only a cost-centre requester may lend their department here. Falling
+        # back to an AP clerk's manager would route every invoice to Finance.
+        manager = invoice.requester.department.manager
 
     seen = set()
     while manager is not None and manager.pk not in seen:
@@ -348,6 +356,13 @@ def resolve_approver(role: str, invoice):
     return None
 
 
+def _finance_fallback(invoice):
+    """A real approver when no department manager can be resolved."""
+    return resolve_approver("FINANCE_MANAGER", invoice) or resolve_approver(
+        "CONTROLLER", invoice
+    )
+
+
 def _step(invoice, step_no, role, approver, reason) -> ApprovalStep:
     return ApprovalStep(
         invoice=invoice,
@@ -361,6 +376,17 @@ def _step(invoice, step_no, role, approver, reason) -> ApprovalStep:
 
 def baseline_steps(invoice, start_step_no: int = 1) -> list[ApprovalStep]:
     approver = _department_manager(invoice, exclude=invoice.requester)
+
+    if approver is None:
+        return [
+            _step(
+                invoice,
+                start_step_no,
+                "FINANCE_MANAGER",
+                _finance_fallback(invoice),
+                "Department unassigned",
+            )
+        ]
 
     specs = [("APPROVER", approver, "Department manager")]
     amount = _total_cad(invoice)
@@ -429,10 +455,39 @@ def build_chain(invoice, start_step_no: int = 1) -> list[ApprovalStep]:
                 approver = resolve_approver(role, invoice)
             specs.append((role, approver, policy))
 
-    if not any(role == "APPROVER" for role, _, _ in specs):
-        specs.insert(
-            0, ("APPROVER", resolve_approver("APPROVER", invoice), None)
-        )
+    has_department_approver = any(
+        role == "APPROVER" and approver is not None
+        for role, approver, _ in specs
+    )
+    if not has_department_approver:
+        department_approver = resolve_approver("APPROVER", invoice)
+        if department_approver is not None:
+            specs.insert(0, ("APPROVER", department_approver, None))
+            has_department_approver = True
+        else:
+            # Drop unassignable APPROVER steps so the chain cannot stall on a
+            # step nobody can own, and escalate explicitly to Finance instead.
+            specs = [
+                (role, approver, policy)
+                for role, approver, policy in specs
+                if not (role == "APPROVER" and approver is None)
+            ]
+            if not any(
+                role == "FINANCE_MANAGER" and approver is not None
+                for role, approver, _ in specs
+            ):
+                specs.insert(
+                    0, ("FINANCE_MANAGER", _finance_fallback(invoice), None)
+                )
+
+    # A resolved department approver makes any leftover unassigned APPROVER
+    # step redundant (and it would stall the sequential chain).
+    if has_department_approver:
+        specs = [
+            (role, approver, policy)
+            for role, approver, policy in specs
+            if not (role == "APPROVER" and approver is None)
+        ]
 
     # The finance invariant follows the approver who will actually act.
     approver_limits = [
@@ -445,7 +500,9 @@ def build_chain(invoice, start_step_no: int = 1) -> list[ApprovalStep]:
 
     amount = _total_cad(invoice)
     finance_reason = None
-    if amount is None:
+    if not has_department_approver:
+        finance_reason = "Department unassigned"
+    elif amount is None:
         finance_reason = "Amount in CAD unavailable"
     elif invoice.vendor is None or invoice.vendor.status != Vendor.Status.ACTIVE:
         finance_reason = "Vendor not approved"
@@ -473,14 +530,20 @@ def build_chain(invoice, start_step_no: int = 1) -> list[ApprovalStep]:
         )
         specs = other_specs[:index] + finance_steps + other_specs[index:]
 
+    # One step per actual person. A manager who is also the Finance Manager
+    # keeps the stronger role instead of being asked to approve twice.
     deduped = []
-    seen = set()
+    index_by_person: dict[object, int] = {}
     for role, approver, policy in specs:
-        key = (role, approver.pk if approver else None)
-        if key in seen:
+        key = approver.pk if approver is not None else f"role:{role}"
+        existing = index_by_person.get(key)
+        if existing is None:
+            index_by_person[key] = len(deduped)
+            deduped.append((role, approver, policy))
             continue
-        seen.add(key)
-        deduped.append((role, approver, policy))
+        current_role, _, _ = deduped[existing]
+        if ROLE_PRIORITY.get(role, 0) > ROLE_PRIORITY.get(current_role, 0):
+            deduped[existing] = (role, approver, policy)
 
     steps = []
     for offset, (role, approver, policy) in enumerate(deduped):

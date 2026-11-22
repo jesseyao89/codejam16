@@ -259,6 +259,28 @@ already `PAID`, and §13 normalization mappings.
 - **Audit.** `DELEGATION_CREATED`/`DELEGATION_ENDED` record before/after;
   delegated approvals still record `delegated_for_id`.
 
+## P0 routing and correction fixes (Nov 2026)
+
+- **Cost-centre routing.** `submit` now resolves `invoice.department` from the
+  explicit field, then the majority coded line department, then an
+  Employee/Approver requester's own department. It never falls back to the AP
+  clerk's manager. If none can be resolved it adds a `DEPARTMENT_UNASSIGNED`
+  warning and routes to a Finance Manager with an explicit reason, instead of
+  silently assigning the AP clerk's manager as the department approver.
+- **One step per person.** Approval chains dedupe by approver user, keeping the
+  strongest role (`CONTROLLER` > `FINANCE_MANAGER` > `APPROVER`), so a manager
+  who is also Finance is not asked to approve the same invoice twice.
+- **Employee/Approver submission.** Upload and submit are open to Employees and
+  Approvers for their own department; coding edits, analysis and finding
+  resolution remain limited to AP Clerk / Finance Manager / Controller. Uploads
+  by these roles default `requester` to the actor and `department` to their own
+  department.
+- **Invoice detail correction.** The invoice drawer now edits extracted header
+  fields (vendor, numbers, dates, currency, amounts, tax lines, ship-to,
+  PO/contract, department, requester) and re-runs analysis immediately. This
+  makes `MISSING_FIELD`, `TOTAL_MISMATCH`, `VENDOR_UNKNOWN` and wrong-tax blocks
+  correctable instead of permanent.
+
 ## Known limitations / next steps
 
 - Extraction supports text PDFs plus scanned PDF pages and PNG/JPEG uploads via

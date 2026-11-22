@@ -148,6 +148,155 @@ def test_upload_creates_draft(client, vendor, settings, tmp_path):
 
 
 @pytest.mark.django_db
+def test_employee_upload_sets_own_department_and_can_submit(
+    vendor, settings, tmp_path
+):
+    department = Department.objects.create(department_id="D01", name="Operations")
+    approver = User.objects.create_user(
+        username="U007",
+        user_id="U007",
+        password="demo1234",
+        role=User.Role.APPROVER,
+        status=User.Status.ACTIVE,
+        department=department,
+    )
+    department.manager = approver
+    department.save(update_fields=["manager"])
+    employee = User.objects.create_user(
+        username="U013",
+        user_id="U013",
+        password="demo1234",
+        role=User.Role.EMPLOYEE,
+        status=User.Status.ACTIVE,
+        department=department,
+        manager=approver,
+    )
+    api = APIClient()
+    api.force_authenticate(user=employee)
+    settings.MEDIA_ROOT = tmp_path
+    upload = SimpleUploadedFile("inv.pdf", b"%PDF-1.4 fake")
+
+    with mock.patch("apps.invoices.actions.extract_invoice", return_value=EXTRACTED):
+        response = api.post(
+            "/api/invoices/upload/", {"file": upload}, format="multipart"
+        )
+
+    assert response.status_code == 201
+    assert response.data["requester_id"] == "U013"
+    assert response.data["department"]["id"] == "D01"
+
+    submitted = api.post(f"/api/invoices/{response.data['id']}/submit/")
+
+    assert submitted.status_code == 200
+    assert submitted.data["status"] == "PENDING_APPROVAL"
+    assert submitted.data["approvals"][0]["approver"]["id"] == "U007"
+
+
+@pytest.mark.django_db
+def test_submit_derives_department_from_coded_lines(client, vendor, ap_clerk):
+    department = Department.objects.create(department_id="D01", name="Operations")
+    approver = User.objects.create_user(
+        username="U007",
+        user_id="U007",
+        password="demo1234",
+        role=User.Role.APPROVER,
+        status=User.Status.ACTIVE,
+        department=department,
+    )
+    department.manager = approver
+    department.save(update_fields=["manager"])
+    invoice = Invoice.objects.create(
+        invoice_id="AP-00099",
+        vendor=vendor,
+        requester=ap_clerk,
+        status=Invoice.Status.DRAFT,
+        currency="CAD",
+        total="105.00",
+    )
+    InvoiceLine.objects.create(
+        invoice=invoice,
+        line_no=1,
+        description="Freight",
+        amount="100.00",
+        department=department,
+    )
+
+    response = client.post(f"/api/invoices/{invoice.invoice_id}/submit/")
+
+    assert response.status_code == 200
+    assert response.data["department"]["id"] == "D01"
+    assert response.data["approvals"][0]["approver"]["id"] == "U007"
+
+
+@pytest.mark.django_db
+def test_submit_without_department_escalates_to_finance(client, vendor, ap_clerk):
+    finance = User.objects.create_user(
+        username="U003",
+        user_id="U003",
+        password="demo1234",
+        role=User.Role.FINANCE_MANAGER,
+        status=User.Status.ACTIVE,
+    )
+    ap_clerk.manager = finance
+    ap_clerk.save(update_fields=["manager"])
+    invoice = Invoice.objects.create(
+        invoice_id="AP-00100",
+        vendor=vendor,
+        requester=ap_clerk,
+        status=Invoice.Status.DRAFT,
+        currency="CAD",
+        total="105.00",
+    )
+
+    response = client.post(f"/api/invoices/{invoice.invoice_id}/submit/")
+
+    assert response.status_code == 200
+    assert response.data["department"] is None
+    assert any(
+        finding["code"] == "DEPARTMENT_UNASSIGNED"
+        for finding in response.data["findings"]
+    )
+    assert response.data["approvals"][0]["approver"]["role"] == "FINANCE_MANAGER"
+    assert response.data["approvals"][0]["approver"]["id"] == "U003"
+
+
+@pytest.mark.django_db
+def test_employee_cannot_submit_another_users_invoice(vendor):
+    department = Department.objects.create(department_id="D01", name="Operations")
+    employee = User.objects.create_user(
+        username="U013",
+        user_id="U013",
+        password="demo1234",
+        role=User.Role.EMPLOYEE,
+        status=User.Status.ACTIVE,
+        department=department,
+    )
+    other = User.objects.create_user(
+        username="U014",
+        user_id="U014",
+        password="demo1234",
+        role=User.Role.EMPLOYEE,
+        status=User.Status.ACTIVE,
+        department=department,
+    )
+    invoice = Invoice.objects.create(
+        invoice_id="AP-00101",
+        vendor=vendor,
+        requester=other,
+        department=department,
+        status=Invoice.Status.DRAFT,
+        currency="CAD",
+        total="105.00",
+    )
+    api = APIClient()
+    api.force_authenticate(user=employee)
+
+    response = api.post(f"/api/invoices/{invoice.invoice_id}/submit/")
+
+    assert response.status_code == 404
+
+
+@pytest.mark.django_db
 def test_upload_extraction_failure_creates_blocked_draft(client, settings, tmp_path):
     settings.MEDIA_ROOT = tmp_path
     upload = SimpleUploadedFile("bad.pdf", b"not really")
@@ -487,6 +636,68 @@ def test_patch_updates_line_coding(client, ap_clerk):
     line = response.data["lines"][0]
     assert line["gl_account"] == "5010"
     assert line["department_id"] == "D01"
+
+
+@pytest.mark.django_db
+def test_patch_extracted_header_fields_unblocks_analysis(client, vendor):
+    vendor.country = "CA"
+    vendor.province_or_state = "ON"
+    vendor.save(update_fields=["country", "province_or_state"])
+    TaxCode.objects.create(code="HST13", description="Ontario HST", rate="0.13")
+    department = Department.objects.create(department_id="D01", name="Operations")
+    requester = User.objects.create_user(
+        username="U013",
+        user_id="U013",
+        password="demo1234",
+        role=User.Role.EMPLOYEE,
+        status=User.Status.ACTIVE,
+        department=department,
+    )
+    invoice = Invoice.objects.create(
+        invoice_id="AP-00002",
+        status=Invoice.Status.DRAFT,
+        findings=attach_finding_ids(
+            [
+                {
+                    "code": "MISSING_FIELD",
+                    "severity": "BLOCK",
+                    "message": "Missing required field: total",
+                    "evidence": {"field": "total"},
+                }
+            ]
+        ),
+        validation_status="BLOCKED",
+    )
+
+    response = client.patch(
+        f"/api/invoices/{invoice.invoice_id}/",
+        {
+            "vendor_id": vendor.vendor_id,
+            "invoice_number": "INV-FIXED",
+            "invoice_date": "2026-09-01",
+            "due_date": "2026-10-01",
+            "currency": "CAD",
+            "subtotal": "100.00",
+            "total": "113.00",
+            "tax_lines": [{"tax_code": "HST13", "amount": "13.00"}],
+            "ship_to_province": "ON",
+            "department_id": department.department_id,
+            "requester_id": requester.user_id,
+        },
+        format="json",
+    )
+
+    assert response.status_code == 200
+    assert response.data["vendor"]["id"] == vendor.vendor_id
+    assert response.data["invoice_number"] == "INV-FIXED"
+    assert response.data["department"]["id"] == "D01"
+    assert response.data["requester_id"] == "U013"
+
+    analyzed = client.post(f"/api/invoices/{invoice.invoice_id}/analyze/")
+
+    assert analyzed.status_code == 200
+    assert analyzed.data["validation_status"] == "PASSED"
+    assert analyzed.data["findings"] == []
 
 
 # --- Resolve finding --------------------------------------------------------

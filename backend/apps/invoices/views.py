@@ -22,6 +22,9 @@ from apps.invoices.serializers import (
 )
 
 _EDIT_ROLES = {"AP_CLERK", "FINANCE_MANAGER", "CONTROLLER"}
+# Employees and department approvers may submit their own department's invoices
+# (contract §2.2). They cannot correct coding or resolve findings.
+_SUBMIT_ROLES = _EDIT_ROLES | {"EMPLOYEE", "APPROVER"}
 
 
 # --- Reference data ---------------------------------------------------------
@@ -126,7 +129,7 @@ class InvoiceActionView(APIView):
 
 
 class InvoiceUploadView(APIView):
-    permission_classes = [role_required(*_EDIT_ROLES)]
+    permission_classes = [role_required(*_SUBMIT_ROLES)]
     parser_classes = [MultiPartParser, FormParser]
 
     def post(self, request):
@@ -156,8 +159,12 @@ class InvoiceResolveFindingView(InvoiceActionView):
         return Response(InvoiceSerializer(invoice).data)
 
 
-class InvoiceSubmitView(InvoiceActionView):
+class InvoiceSubmitView(APIView):
+    permission_classes = [role_required(*_SUBMIT_ROLES)]
+
     def post(self, request, invoice_id):
-        invoice = self.get_invoice(request, invoice_id)
+        invoice = get_object_or_404(
+            actions.visible_invoices(request.user), invoice_id=invoice_id
+        )
         invoice = actions.submit_invoice(invoice, request.user)
         return Response(InvoiceSerializer(invoice).data)

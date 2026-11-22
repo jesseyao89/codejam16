@@ -569,7 +569,7 @@ PO_CURRENCY_MISMATCH        PO_AMOUNT_EXCEEDED         PO_CUMULATIVE_EXCEEDED
 CONTRACT_NOT_FOUND          CONTRACT_VENDOR_MISMATCH   CONTRACT_CURRENCY_MISMATCH
 CONTRACT_INACTIVE           CONTRACT_DATE_OUTSIDE_TERM CONTRACT_FEE_EXCEEDED
 CONTRACT_RATE_EXCEEDED      CONTRACT_MONTHLY_CAP_EXCEEDED
-UNVERIFIED_BANK_CHANGE
+UNVERIFIED_BANK_CHANGE      DEPARTMENT_UNASSIGNED
 ```
 
 Duplicate severities: `EXACT_DUPLICATE` (same vendor + same number once
@@ -771,12 +771,18 @@ POST   /api/approvals/{id}/reject/      { comment } -> Invoice   (returns invoic
 There is no separate routing endpoint. `POST /api/invoices/{id}/submit/` does,
 in one transaction:
 
-1. Reject if any `BLOCK` finding is open (`422 VALIDATION_BLOCKED`).
-2. Evaluate the active approval policies (amount in CAD, department, vendor
-   status, legal/new-vendor flags).
-3. Create the ordered PENDING `Approval` steps.
-4. Move the invoice `DRAFT` or `REVIEW` → `PENDING_APPROVAL`.
-5. Write the audit event.
+1. Resolve the cost centre: an explicit `department_id`, else the majority
+   department on the coded lines, else an Employee/Approver requester's own
+   department. An AP clerk's finance manager is never used as a fallback.
+2. Reject if any `BLOCK` finding is open (`422 VALIDATION_BLOCKED`).
+3. If no department can be resolved, add the `DEPARTMENT_UNASSIGNED` `WARNING`
+   and route the first step to a Finance Manager with an explicit reason.
+4. Evaluate the active approval policies (amount in CAD, department, vendor
+   status, legal/new-vendor flags). A user who matches more than one role gets
+   one step, keeping the strongest role.
+5. Create the ordered PENDING `Approval` steps.
+6. Move the invoice `DRAFT` or `REVIEW` → `PENDING_APPROVAL`.
+7. Write the audit event.
 
 The response is the updated `Invoice`, whose `approvals` array is the routing
 preview: each step carries a human-readable `reason` (for example "Department

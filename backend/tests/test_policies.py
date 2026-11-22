@@ -917,6 +917,44 @@ def test_non_approver_manager_escalates(
     assert policy_engine.build_chain(invoice)[0].approver == director
 
 
+def test_same_person_is_not_assigned_two_steps(
+    approver, finance, clerk, department, vendor
+):
+    department.manager = finance
+    department.save(update_fields=["manager"])
+    finance.department = department
+    finance.save(update_fields=["department"])
+
+    _make_policy(
+        "POL-SAME-PERSON",
+        {},
+        [
+            {"step_no": 1, "role": "APPROVER", "approver_id": None},
+            {"step_no": 2, "role": "FINANCE_MANAGER", "approver_id": None},
+        ],
+    )
+    invoice = _invoice("5000.00", vendor, department, clerk)
+
+    steps = policy_engine.build_chain(invoice)
+    assert [step.approver for step in steps] == [finance]
+    assert _roles(steps) == ["FINANCE_MANAGER"]
+
+
+def test_missing_department_escalates_to_finance_not_ap_manager(
+    finance, clerk, vendor
+):
+    # The clerk's manager is Finance; without a department the chain must not
+    # treat that manager as the department approver.
+    clerk.manager = finance
+    clerk.save(update_fields=["manager"])
+    invoice = _invoice("5000.00", vendor, None, clerk)
+
+    steps = policy_engine.build_chain(invoice)
+    assert _roles(steps) == ["FINANCE_MANAGER"]
+    assert steps[0].approver == finance
+    assert steps[0].reason == "Department unassigned"
+
+
 def test_existing_finance_reordered_before_controller(
     controller, approver, finance, clerk, department, vendor
 ):

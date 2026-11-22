@@ -12,6 +12,15 @@ export const EDIT_INVOICE_ROLES = new Set<string>([
   'CONTROLLER',
 ])
 
+// Employees and department approvers may start and submit their own
+// department's invoices (contract §2.2), but cannot correct coding or resolve
+// findings.
+export const SUBMIT_INVOICE_ROLES = new Set<string>([
+  ...EDIT_INVOICE_ROLES,
+  'EMPLOYEE',
+  'APPROVER',
+])
+
 export const DECISION_ROLES = new Set<string>([
   'APPROVER',
   'FINANCE_MANAGER',
@@ -105,7 +114,7 @@ export function canEditInvoiceNow(
 }
 
 export function canUploadInvoice(role: UserRole | string): boolean {
-  return canEditInvoice(role)
+  return SUBMIT_INVOICE_ROLES.has(role)
 }
 
 export function canRunAnalysis(
@@ -126,7 +135,7 @@ export function canSubmitInvoice(
   role: UserRole | string,
   status: string
 ): boolean {
-  return canEditInvoiceNow(role, status)
+  return SUBMIT_INVOICE_ROLES.has(role) && canEditInvoiceInStatus(status)
 }
 
 export function canDecideApproval(role: UserRole | string): boolean {

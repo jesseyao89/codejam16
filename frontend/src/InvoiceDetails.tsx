@@ -41,6 +41,7 @@ import LockOutlinedIcon from '@mui/icons-material/LockOutlined'
 import {
   invoiceService,
   referenceService,
+  vendorService,
   type AuditEvent,
   type CodingSuggestion,
   type Department,
@@ -48,8 +49,10 @@ import {
   type GLAccount,
   type Invoice,
   type InvoiceLine,
+  type InvoicePatch,
   type InvoiceTrace,
   type User,
+  type VendorDetail,
 } from './api/services'
 
 import { describeError, type ErrorPresentation } from './api/errors'
@@ -77,6 +80,48 @@ interface InvoiceDetailsProps {
 interface LineEdit {
   gl_account: string
   department_id: string
+}
+
+interface HeaderTaxLine {
+  tax_code: string
+  amount: string
+}
+
+interface HeaderEdit {
+  vendor_id: string
+  invoice_number: string
+  invoice_date: string
+  due_date: string
+  currency: string
+  subtotal: string
+  total: string
+  ship_to_province: string
+  po_id: string
+  contract_id: string
+  department_id: string
+  requester_id: string
+  tax_lines: HeaderTaxLine[]
+}
+
+function buildHeaderEdit(invoice: Invoice): HeaderEdit {
+  return {
+    vendor_id: invoice.vendor?.id ?? '',
+    invoice_number: invoice.invoice_number ?? '',
+    invoice_date: invoice.invoice_date ?? '',
+    due_date: invoice.due_date ?? '',
+    currency: invoice.currency ?? '',
+    subtotal: invoice.subtotal ?? '',
+    total: invoice.total ?? '',
+    ship_to_province: invoice.ship_to_province ?? '',
+    po_id: invoice.po_id ?? '',
+    contract_id: invoice.contract_id ?? '',
+    department_id: invoice.department?.id ?? '',
+    requester_id: invoice.requester_id ?? '',
+    tax_lines: (invoice.tax_lines ?? []).map((line) => ({
+      tax_code: line.tax_code,
+      amount: line.amount,
+    })),
+  }
 }
 
 function buildLineEdits(lines: InvoiceLine[] | undefined): Record<number, LineEdit> {
@@ -214,6 +259,13 @@ export default function InvoiceDetails({
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<ErrorPresentation | null>(null)
 
+  const [vendors, setVendors] = useState<VendorDetail[]>([])
+  const [headerOpen, setHeaderOpen] = useState(false)
+  const [headerEdit, setHeaderEdit] = useState<HeaderEdit | null>(null)
+  const [headerSaving, setHeaderSaving] = useState(false)
+  const [headerError, setHeaderError] =
+    useState<ErrorPresentation | null>(null)
+
   const [action, setAction] = useState<'analyze' | 'submit' | null>(null)
   const [actionError, setActionError] =
     useState<ErrorPresentation | null>(null)
@@ -283,6 +335,25 @@ export default function InvoiceDetails({
         if (cancelled) return
         setRefError(describeError(err))
         setRefLoading(false)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  // Vendors for the header-correction dialog. A failed load leaves the vendor
+  // selector empty; the rest of the invoice remains usable.
+  useEffect(() => {
+    let cancelled = false
+
+    vendorService
+      .listAll()
+      .then((response) => {
+        if (!cancelled) setVendors(response.results)
+      })
+      .catch(() => {
+        if (!cancelled) setVendors([])
       })
 
     return () => {
@@ -483,6 +554,99 @@ export default function InvoiceDetails({
       setSaveError(describeError(err))
     } finally {
       setSaving(false)
+    }
+  }
+
+  function openHeaderEdit() {
+    if (!invoice) return
+    setHeaderEdit(buildHeaderEdit(invoice))
+    setHeaderError(null)
+    setHeaderOpen(true)
+  }
+
+  function updateHeader(field: keyof HeaderEdit, value: string) {
+    setHeaderEdit((previous) =>
+      previous ? { ...previous, [field]: value } : previous
+    )
+  }
+
+  function updateTaxLine(index: number, patch: Partial<HeaderTaxLine>) {
+    setHeaderEdit((previous) => {
+      if (!previous) return previous
+      const taxLines = previous.tax_lines.map((line, lineIndex) =>
+        lineIndex === index ? { ...line, ...patch } : line
+      )
+      return { ...previous, tax_lines: taxLines }
+    })
+  }
+
+  function addTaxLine() {
+    setHeaderEdit((previous) =>
+      previous
+        ? {
+            ...previous,
+            tax_lines: [
+              ...previous.tax_lines,
+              { tax_code: 'GST5', amount: '' },
+            ],
+          }
+        : previous
+    )
+  }
+
+  function removeTaxLine(index: number) {
+    setHeaderEdit((previous) =>
+      previous
+        ? {
+            ...previous,
+            tax_lines: previous.tax_lines.filter(
+              (_, lineIndex) => lineIndex !== index
+            ),
+          }
+        : previous
+    )
+  }
+
+  async function handleSaveHeader() {
+    if (!invoice || !headerEdit) return
+
+    setHeaderSaving(true)
+    setHeaderError(null)
+
+    const payload: InvoicePatch = {
+      vendor_id: headerEdit.vendor_id || null,
+      invoice_number: headerEdit.invoice_number,
+      invoice_date: headerEdit.invoice_date || null,
+      due_date: headerEdit.due_date || null,
+      currency: headerEdit.currency.trim().toUpperCase(),
+      subtotal: headerEdit.subtotal || null,
+      total: headerEdit.total || null,
+      tax_lines: headerEdit.tax_lines
+        .filter((line) => line.tax_code.trim() && line.amount.trim())
+        .map((line) => ({
+          tax_code: line.tax_code.trim().toUpperCase(),
+          amount: line.amount.trim(),
+        })),
+      ship_to_province: headerEdit.ship_to_province || null,
+      po_id: headerEdit.po_id || null,
+      contract_id: headerEdit.contract_id || null,
+      department_id: headerEdit.department_id || null,
+      requester_id: headerEdit.requester_id || null,
+    }
+
+    try {
+      await invoiceService.patch(invoice.id, payload)
+      const result = await invoiceService.analyze(invoice.id)
+      setNotice(
+        `Invoice details saved. Analysis re-ran: ${result.validation_status}.`
+      )
+      setHeaderOpen(false)
+      setReloadToken((token) => token + 1)
+      await onChanged()
+    } catch (err) {
+      setHeaderError(describeError(err))
+    } finally {
+      setHeaderSaving(false)
     }
   }
 
@@ -786,9 +950,18 @@ export default function InvoiceDetails({
                 <Stack spacing={3}>
                   {!editRole && (
                     <Alert severity="info">
-                      Your role can view this invoice but not change it.
-                      Coding and submission are limited to AP Clerks, Finance
-                      Managers and Controllers.
+                      {canSubmitInvoice(user.role, invoice.status)
+                        ? 'You can submit this invoice for your department, but coding changes are limited to AP Clerks, Finance Managers and Controllers.'
+                        : 'Your role can view this invoice but not change it.'}
+                    </Alert>
+                  )}
+
+                  {editable && invoice.department === null && (
+                    <Alert severity="warning">
+                      No department is assigned. On submit the server will
+                      infer it from the coded lines or the requester; if it
+                      still cannot, the invoice is routed to a Finance Manager
+                      with a DEPARTMENT_UNASSIGNED warning.
                     </Alert>
                   )}
 
@@ -1828,6 +2001,16 @@ export default function InvoiceDetails({
                   Refresh
                 </Button>
 
+                {editRole && editable && (
+                  <Button
+                    variant="outlined"
+                    disabled={action !== null || headerSaving}
+                    onClick={openHeaderEdit}
+                  >
+                    Edit invoice details
+                  </Button>
+                )}
+
                 {editRole && (
                   <>
                     <Button
@@ -1855,30 +2038,316 @@ export default function InvoiceDetails({
                           ? `Save coding (${dirtyLines.length})`
                           : 'Save coding'}
                     </Button>
-
-                    <Button
-                      variant="contained"
-                      startIcon={<SendIcon />}
-                      disabled={!canSubmit || action !== null}
-                      onClick={() => {
-                        void handleSubmit()
-                      }}
-                      sx={{
-                        backgroundColor: '#404D73',
-                        '&:hover': { backgroundColor: '#354263' },
-                      }}
-                    >
-                      {action === 'submit'
-                        ? 'Submitting...'
-                        : 'Submit for approval'}
-                    </Button>
                   </>
+                )}
+
+                {canSubmitInvoice(user.role, invoice.status) && (
+                  <Button
+                    variant="contained"
+                    startIcon={<SendIcon />}
+                    disabled={!canSubmit || action !== null}
+                    onClick={() => {
+                      void handleSubmit()
+                    }}
+                    sx={{
+                      backgroundColor: '#404D73',
+                      '&:hover': { backgroundColor: '#354263' },
+                    }}
+                  >
+                    {action === 'submit'
+                      ? 'Submitting...'
+                      : 'Submit for approval'}
+                  </Button>
                 )}
               </Stack>
             </Box>
           </>
         )}
       </Box>
+
+      {/* HEADER CORRECTION DIALOG */}
+      <Dialog
+        open={headerOpen}
+        onClose={() => {
+          if (!headerSaving) setHeaderOpen(false)
+        }}
+        maxWidth="md"
+        fullWidth
+      >
+        <DialogTitle sx={{ fontWeight: 700, color: '#263451' }}>
+          Edit invoice details
+        </DialogTitle>
+
+        <DialogContent dividers>
+          {headerError && (
+            <Alert severity="error" sx={{ mb: 2 }}>
+              <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                {headerError.code}
+              </Typography>
+              <Typography variant="body2">{headerError.message}</Typography>
+              {headerError.hint && (
+                <Typography variant="caption">{headerError.hint}</Typography>
+              )}
+            </Alert>
+          )}
+
+          <Alert severity="info" sx={{ mb: 2 }}>
+            Correct extraction errors here. Saving re-runs validation, so
+            blocking findings are recomputed against the corrected values.
+          </Alert>
+
+          {headerEdit && (
+            <Stack spacing={2} sx={{ mt: 1 }}>
+              <TextField
+                select
+                fullWidth
+                label="Vendor"
+                value={headerEdit.vendor_id}
+                disabled={headerSaving}
+                onChange={(event) =>
+                  updateHeader('vendor_id', event.target.value)
+                }
+                helperText="Choose the vendor master record, or leave unmatched for review."
+              >
+                <MenuItem value="">Unmatched / unknown vendor</MenuItem>
+                {vendors.map((vendor) => (
+                  <MenuItem key={vendor.id} value={vendor.id}>
+                    {vendor.legal_name} ({vendor.id})
+                  </MenuItem>
+                ))}
+              </TextField>
+
+              <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
+                <TextField
+                  fullWidth
+                  label="Invoice number"
+                  value={headerEdit.invoice_number}
+                  disabled={headerSaving}
+                  onChange={(event) =>
+                    updateHeader('invoice_number', event.target.value)
+                  }
+                />
+                <TextField
+                  fullWidth
+                  label="Currency"
+                  value={headerEdit.currency}
+                  disabled={headerSaving}
+                  onChange={(event) =>
+                    updateHeader('currency', event.target.value.toUpperCase())
+                  }
+                  helperText="ISO 4217, e.g. CAD or USD."
+                />
+              </Stack>
+
+              <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
+                <TextField
+                  fullWidth
+                  type="date"
+                  label="Invoice date"
+                  value={headerEdit.invoice_date}
+                  disabled={headerSaving}
+                  onChange={(event) =>
+                    updateHeader('invoice_date', event.target.value)
+                  }
+                  slotProps={{ inputLabel: { shrink: true } }}
+                />
+                <TextField
+                  fullWidth
+                  type="date"
+                  label="Due date"
+                  value={headerEdit.due_date}
+                  disabled={headerSaving}
+                  onChange={(event) =>
+                    updateHeader('due_date', event.target.value)
+                  }
+                  slotProps={{ inputLabel: { shrink: true } }}
+                />
+              </Stack>
+
+              <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
+                <TextField
+                  fullWidth
+                  label="Subtotal"
+                  value={headerEdit.subtotal}
+                  disabled={headerSaving}
+                  onChange={(event) =>
+                    updateHeader('subtotal', event.target.value)
+                  }
+                />
+                <TextField
+                  fullWidth
+                  label="Total"
+                  value={headerEdit.total}
+                  disabled={headerSaving}
+                  onChange={(event) =>
+                    updateHeader('total', event.target.value)
+                  }
+                />
+              </Stack>
+
+              <Box>
+                <Stack
+                  direction="row"
+                  sx={{
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    mb: 1,
+                  }}
+                >
+                  <Typography sx={{ fontWeight: 600 }}>
+                    Tax lines
+                  </Typography>
+                  <Button size="small" onClick={addTaxLine}>
+                    Add tax line
+                  </Button>
+                </Stack>
+
+                {headerEdit.tax_lines.length === 0 ? (
+                  <Typography variant="caption" color="text.secondary">
+                    No tax recorded. Add a line if the invoice charges GST,
+                    HST, PST or QST.
+                  </Typography>
+                ) : (
+                  <Stack spacing={1}>
+                    {headerEdit.tax_lines.map((line, index) => (
+                      <Stack
+                        key={index}
+                        direction={{ xs: 'column', sm: 'row' }}
+                        spacing={1}
+                        sx={{ alignItems: { sm: 'center' } }}
+                      >
+                        <TextField
+                          size="small"
+                          label="Tax code"
+                          value={line.tax_code}
+                          disabled={headerSaving}
+                          onChange={(event) =>
+                            updateTaxLine(index, {
+                              tax_code: event.target.value.toUpperCase(),
+                            })
+                          }
+                          sx={{ minWidth: 140 }}
+                        />
+                        <TextField
+                          size="small"
+                          label="Tax amount"
+                          value={line.amount}
+                          disabled={headerSaving}
+                          onChange={(event) =>
+                            updateTaxLine(index, {
+                              amount: event.target.value,
+                            })
+                          }
+                          sx={{ minWidth: 140 }}
+                        />
+                        <Button
+                          size="small"
+                          color="error"
+                          disabled={headerSaving}
+                          onClick={() => removeTaxLine(index)}
+                        >
+                          Remove
+                        </Button>
+                      </Stack>
+                    ))}
+                  </Stack>
+                )}
+              </Box>
+
+              <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
+                <TextField
+                  fullWidth
+                  label="Ship-to province"
+                  value={headerEdit.ship_to_province}
+                  disabled={headerSaving}
+                  onChange={(event) =>
+                    updateHeader(
+                      'ship_to_province',
+                      event.target.value.toUpperCase()
+                    )
+                  }
+                  helperText="Two-letter code, e.g. ON, BC, QC."
+                />
+                <TextField
+                  select
+                  fullWidth
+                  label="Department"
+                  value={headerEdit.department_id}
+                  disabled={headerSaving}
+                  onChange={(event) =>
+                    updateHeader('department_id', event.target.value)
+                  }
+                  helperText="Drives the department approver."
+                >
+                  <MenuItem value="">Unassigned</MenuItem>
+                  {departments.map((department) => (
+                    <MenuItem
+                      key={department.id}
+                      value={department.id}
+                    >
+                      {department.name} ({department.id})
+                    </MenuItem>
+                  ))}
+                </TextField>
+              </Stack>
+
+              <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
+                <TextField
+                  fullWidth
+                  label="Purchase order ID"
+                  value={headerEdit.po_id}
+                  disabled={headerSaving}
+                  onChange={(event) =>
+                    updateHeader('po_id', event.target.value)
+                  }
+                />
+                <TextField
+                  fullWidth
+                  label="Contract ID"
+                  value={headerEdit.contract_id}
+                  disabled={headerSaving}
+                  onChange={(event) =>
+                    updateHeader('contract_id', event.target.value)
+                  }
+                />
+              </Stack>
+
+              <TextField
+                fullWidth
+                label="Requester user ID"
+                value={headerEdit.requester_id}
+                disabled={headerSaving}
+                onChange={(event) =>
+                  updateHeader('requester_id', event.target.value)
+                }
+                helperText="The employee who requested the spend, e.g. U013. They cannot approve it."
+              />
+            </Stack>
+          )}
+        </DialogContent>
+
+        <DialogActions sx={{ p: 2.5 }}>
+          <Button
+            onClick={() => setHeaderOpen(false)}
+            disabled={headerSaving}
+          >
+            Cancel
+          </Button>
+          <Button
+            variant="contained"
+            disabled={!headerEdit || headerSaving}
+            onClick={() => {
+              void handleSaveHeader()
+            }}
+            sx={{
+              backgroundColor: '#404D73',
+              '&:hover': { backgroundColor: '#354263' },
+            }}
+          >
+            {headerSaving ? 'Saving and analyzing...' : 'Save and re-run analysis'}
+          </Button>
+        </DialogActions>
+      </Dialog>
 
       {/* RESOLVE WARNING DIALOG */}
       <Dialog

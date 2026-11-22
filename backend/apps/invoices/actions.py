@@ -17,7 +17,7 @@ from django.conf import settings
 from django.db import transaction
 from django.db.models import Max, Q
 from django.utils import timezone
-from rest_framework.exceptions import NotFound, ValidationError
+from rest_framework.exceptions import NotFound, PermissionDenied, ValidationError
 
 from apps.accounts.delegations import principals_for_delegate
 from apps.accounts.exceptions import InvalidStateTransition, ValidationBlocked
@@ -45,6 +45,9 @@ logger = logging.getLogger(__name__)
 
 # Roles allowed to edit/correct invoices (contract §5.5, §2.2).
 _EDIT_ROLES = {"AP_CLERK", "FINANCE_MANAGER", "CONTROLLER"}
+# Roles that own a cost-centre invoice. Their department is a safe default
+# when an uploaded invoice has not been coded yet.
+_DEPARTMENT_REQUESTER_ROLES = {"EMPLOYEE", "APPROVER"}
 _FULL_READ_ROLES = {"AP_CLERK", "FINANCE_MANAGER", "CONTROLLER", "AUDITOR"}
 
 
@@ -64,6 +67,17 @@ def _to_date(value):
         return date.fromisoformat(str(value)[:10])
     except (ValueError, TypeError):
         return None
+
+
+def _default_department(actor):
+    """The uploader's cost centre for employee/approver submissions."""
+    if (
+        actor is not None
+        and actor.role in _DEPARTMENT_REQUESTER_ROLES
+        and actor.department_id
+    ):
+        return actor.department
+    return None
 
 
 def next_invoice_id() -> str:
@@ -399,6 +413,7 @@ def create_invoice_from_extraction(
             invoice_id=next_invoice_id(),
             status=Invoice.Status.DRAFT,
             requester=actor,
+            department=_default_department(actor),
         )
         _populate_from_extraction(
             invoice, resolve_references(resolve_vendor(extracted))
@@ -433,6 +448,7 @@ def create_invoice_with_extraction_failure(
             invoice_id=next_invoice_id(),
             status=Invoice.Status.DRAFT,
             requester=actor,
+            department=_default_department(actor),
         )
         finding = {
             "code": code,
@@ -713,20 +729,140 @@ def resolve_finding(invoice, finding_id: str, justification: str, actor) -> Invo
     return invoice
 
 
+def _derive_department(invoice):
+    """Pick the cost centre used for approval routing.
+
+    Prefer an explicit invoice department, then the majority department of the
+    coded lines, then the requester's own department. Never fall back to the AP
+    clerk's finance department.
+    """
+    if invoice.department_id:
+        return invoice.department
+
+    counts: dict[str, int] = {}
+    for department_id in invoice.lines.exclude(
+        department__isnull=True
+    ).values_list("department_id", flat=True):
+        if not department_id:
+            continue
+        counts[department_id] = counts.get(department_id, 0) + 1
+    if counts:
+        department_id = sorted(
+            counts.items(), key=lambda item: (-item[1], item[0])
+        )[0][0]
+        return Department.objects.filter(department_id=department_id).first()
+
+    requester = invoice.requester
+    if (
+        requester is not None
+        and requester.role in _DEPARTMENT_REQUESTER_ROLES
+        and requester.department_id
+    ):
+        return requester.department
+    return None
+
+
+def _check_submit_scope(invoice, actor) -> None:
+    """Object-level check for employee/approver submissions (contract §2.2)."""
+    if actor.role == "EMPLOYEE":
+        if invoice.requester_id != actor.id:
+            raise PermissionDenied(
+                "You can only submit invoices you requested."
+            )
+        if (
+            invoice.department_id
+            and actor.department_id
+            and invoice.department_id != actor.department_id
+        ):
+            raise PermissionDenied(
+                "You can only submit invoices for your own department."
+            )
+    elif actor.role == "APPROVER":
+        if invoice.requester_id == actor.id:
+            return
+        if (
+            not actor.department_id
+            or invoice.department_id != actor.department_id
+        ):
+            raise PermissionDenied(
+                "You can only submit invoices requested by you or your department."
+            )
+
+
+def _sync_department_finding(invoice) -> None:
+    """Keep the explicit DEPARTMENT_UNASSIGNED warning in step with routing."""
+    findings = list(invoice.findings or [])
+    has_warning = any(
+        finding.get("code") == "DEPARTMENT_UNASSIGNED" for finding in findings
+    )
+
+    if invoice.department_id:
+        if not has_warning:
+            return
+        findings = [
+            finding
+            for finding in findings
+            if finding.get("code") != "DEPARTMENT_UNASSIGNED"
+        ]
+    elif not has_warning:
+        findings.append(
+            {
+                "code": "DEPARTMENT_UNASSIGNED",
+                "severity": "WARNING",
+                "message": (
+                    "No department could be determined for this invoice; it is "
+                    "routed to a Finance Manager instead of a department approver."
+                ),
+                "evidence": {
+                    "invoice_id": invoice.invoice_id,
+                    "requester_id": (
+                        invoice.requester.user_id if invoice.requester else None
+                    ),
+                },
+            }
+        )
+    else:
+        return
+
+    invoice.findings = findings_mod.attach_finding_ids(findings)
+    invoice.validation_status = findings_mod.compute_validation_status(
+        invoice.findings
+    )
+    invoice.save(update_fields=["findings", "validation_status"])
+
+
 def submit_invoice(invoice, actor) -> Invoice:
     if invoice.status not in (Invoice.Status.DRAFT, Invoice.Status.REVIEW):
         raise InvalidStateTransition()
 
-    open_blocks = [
-        finding
-        for finding in (invoice.findings or [])
-        if finding.get("resolution") is None and finding.get("severity") == "BLOCK"
-    ]
-    if open_blocks:
-        raise ValidationBlocked()
-
     previous = invoice.status
     with transaction.atomic():
+        # Route on the cost centre, not the AP clerk's finance department.
+        derived = _derive_department(invoice)
+        if derived is not None and invoice.department_id != derived.department_id:
+            invoice.department = derived
+            invoice.save(update_fields=["department"])
+            record_audit(
+                actor,
+                "INVOICE_DEPARTMENT_ASSIGNED",
+                "INVOICE",
+                invoice.invoice_id,
+                after={"department_id": derived.department_id},
+                evidence={"source": "submit"},
+            )
+
+        _check_submit_scope(invoice, actor)
+        _sync_department_finding(invoice)
+
+        open_blocks = [
+            finding
+            for finding in (invoice.findings or [])
+            if finding.get("resolution") is None
+            and finding.get("severity") == "BLOCK"
+        ]
+        if open_blocks:
+            raise ValidationBlocked()
+
         # On resubmit, drop leftover pending steps but keep the decision history
         # (approved/rejected steps remain for the audit trail).
         ApprovalStep.objects.filter(invoice=invoice, action="").delete()
@@ -744,8 +880,11 @@ def submit_invoice(invoice, actor) -> Invoice:
             "INVOICE_SUBMITTED",
             "INVOICE",
             invoice.invoice_id,
-            before={"status": previous},
-            after={"status": invoice.status},
+            before={"status": previous, "department_id": invoice.department_id},
+            after={
+                "status": invoice.status,
+                "department_id": invoice.department_id,
+            },
         )
     return invoice
 
