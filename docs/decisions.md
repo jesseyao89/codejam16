@@ -102,13 +102,9 @@ The frontend surfaced six read-API mismatches. Resolutions:
    (`409 INVALID_STATE_TRANSITION`) when the linked invoice is already `PAID`,
    covering historical `scheduled` payments.
 
-Contract deltas still to apply to `docs/API_CONTRACT.md` (blocked by the backend
-agent's edit permissions):
-
-- §7 approvals filter list: add `actionable`, and document `mine` (all statuses)
-  vs `actionable` (pending and actionable now).
-- §8 payments: add that release is refused when the invoice is already `PAID`.
-- §13: add the payment/invoice/comment normalization mappings above.
+Contract updates applied to `docs/API_CONTRACT.md`: §7 filter list (`actionable`,
+plus `mine` vs `actionable` semantics), §8 release refusal when the invoice is
+already `PAID`, and §13 normalization mappings.
 
 ## Known limitations / next steps
 

@@ -669,7 +669,7 @@ the bank-change mutation/approval flow.
 ## 7. Approvals, policies & delegation (feature 6)
 
 ```
-GET    /api/approvals/                  -> paginated Approval (filters: invoice_id, status, mine)
+GET    /api/approvals/                  -> paginated Approval (filters: invoice_id, status, mine, actionable)
 GET    /api/approvals/{id}/             -> Approval
 POST   /api/approvals/{id}/approve/     { comment } -> Invoice   (updated approval chain)
 POST   /api/approvals/{id}/reject/      { comment } -> Invoice   (returns invoice to REVIEW)
@@ -682,6 +682,11 @@ POST   /api/approvals/{id}/reject/      { comment } -> Invoice   (returns invoic
   delegation; inactive/terminated users cannot act; an approver cannot release
   the payment for an invoice they approved.
 - A rejected invoice returns to `REVIEW`; the approval chain is retained.
+- `mine=true` filters to steps assigned to the caller (directly, via an active
+  delegate, or role fallback) **regardless of status**; combine with
+  `status=PENDING` for decisions awaiting them.
+- `actionable=true` returns only what the caller can act on now: assigned to
+  them, `status=PENDING`, and the invoice is in `PENDING_APPROVAL`.
 
 ### 7.1 Submit routes atomically (3A)
 
@@ -789,6 +794,8 @@ POST   /api/payments/{id}/cancel/   -> Payment
   (`PERMISSION_DENIED`).
 - `release` is idempotent: repeating it returns the same payment and never
   creates a second one.
+- Release is refused (`409 INVALID_STATE_TRANSITION`) when the linked invoice is
+  already `PAID` (covers historical `scheduled` payments on paid invoices).
 - Payment execution is simulated; `RELEASED` and `PAID` are recorded, no real
   funds move.
 - **Release executes immediately (4A).** `POST /api/payments/{id}/release/`
@@ -979,7 +986,12 @@ features 3 and 4.
   (`invoice_id`, `vendor_id`, `payment_id`, `department_id`, …); `User.id`
   is `user_id` (`U007`).
 - `extraction` (API) ↔ `Invoice.raw_extraction`.
-- Historical dataset statuses are normalized on serialization to the canonical
-  enums above; new records use the canonical values.
+- Historical dataset statuses are normalized on serialization:
+  - `Payment.status`: `settled` → `PAID`, `scheduled` → `SCHEDULED`,
+    `outstanding` → `SCHEDULED`; new records use the canonical values.
+  - `Invoice.validation_status`: historical rows were never analyzed, so an
+    empty string is serialized as `null`.
+  - `Approval.comment`: an undecided step's empty comment is serialized as
+    `null`.
 - `bank_account` is stored for matching but only `bank_account_masked` is ever
   serialized.
