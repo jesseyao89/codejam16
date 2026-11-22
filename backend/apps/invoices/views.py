@@ -10,6 +10,7 @@ from rest_framework.views import APIView
 
 from apps.accounts.models import Department
 from apps.accounts.permissions import role_required
+from apps.audit.serializers import AuditEventSerializer
 from apps.invoices import actions
 from apps.invoices.models import GLAccount, TaxCode
 from apps.invoices.serializers import (
@@ -108,6 +109,9 @@ class DashboardView(APIView):
         summary = actions.dashboard_summary(request.user)
         summary["pending_approvals"] = ApprovalStepSerializer(
             summary["pending_approvals"], many=True
+        ).data
+        summary["recent_activity"] = AuditEventSerializer(
+            summary["recent_activity"], many=True
         ).data
         return Response(summary)
 

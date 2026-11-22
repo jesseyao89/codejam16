@@ -1,5 +1,6 @@
 from django.urls import path
 
+from apps.audit.views import InvoiceTraceView
 from apps.invoices import views
 
 app_name = "invoices"
@@ -13,6 +14,11 @@ urlpatterns = [
     # Invoices (contract §4, §5)
     path("invoices/", views.InvoiceListView.as_view(), name="invoice-list"),
     path("invoices/upload/", views.InvoiceUploadView.as_view(), name="invoice-upload"),
+    path(
+        "invoices/<str:invoice_id>/audit/",
+        InvoiceTraceView.as_view(),
+        name="invoice-audit",
+    ),
     path(
         "invoices/<str:invoice_id>/",
         views.InvoiceDetailView.as_view(),

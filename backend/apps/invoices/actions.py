@@ -20,6 +20,7 @@ from rest_framework.exceptions import NotFound, ValidationError
 from apps.accounts.exceptions import InvalidStateTransition, ValidationBlocked
 from apps.accounts.models import Department, User
 from apps.approvals.models import ApprovalStep
+from apps.audit.models import AuditEvent
 from apps.audit.services import record_audit
 from apps.invoices import findings as findings_mod
 from apps.invoices.models import GLAccount, Invoice, InvoiceLine
@@ -117,7 +118,11 @@ def dashboard_summary(user) -> dict:
         "pending_approvals": pending_approvals,
         # Populated by the payments slice; the dashboard UI reads the count.
         "payments_due": [],
-        "recent_activity": [],
+        "recent_activity": (
+            AuditEvent.objects.select_related("actor")
+            .filter(entity_type="INVOICE", entity_id__in=visible_ids)
+            .order_by("-timestamp")[:10]
+        ),
     }
 
 
@@ -374,7 +379,8 @@ _EDITABLE_FIELDS = {
 }
 
 
-def _apply_lines(invoice, lines_data) -> None:
+def _apply_lines(invoice, lines_data) -> list[dict]:
+    changes = []
     for entry in lines_data or []:
         line_no = entry.get("line_no")
         if line_no is None:
@@ -382,6 +388,10 @@ def _apply_lines(invoice, lines_data) -> None:
         line = invoice.lines.filter(line_no=line_no).first()
         if line is None:
             raise ValidationError(f"Unknown line_no: {line_no}")
+        before = {
+            "gl_account": line.gl_account_id,
+            "department_id": line.department_id,
+        }
         if "gl_account" in entry:
             line.gl_account = (
                 GLAccount.objects.filter(account_number=entry["gl_account"]).first()
@@ -395,6 +405,13 @@ def _apply_lines(invoice, lines_data) -> None:
                 else None
             )
         line.save()
+        after = {
+            "gl_account": line.gl_account_id,
+            "department_id": line.department_id,
+        }
+        if before != after:
+            changes.append({"line_no": line_no, "before": before, "after": after})
+    return changes
 
 
 def apply_invoice_patch(invoice, data: dict, actor) -> Invoice:
@@ -408,8 +425,9 @@ def apply_invoice_patch(invoice, data: dict, actor) -> Invoice:
             changed_fields.append(field)
 
     lines_data = data.get("lines")
+    coding_changes = []
     if lines_data is not None:
-        _apply_lines(invoice, lines_data)
+        coding_changes = _apply_lines(invoice, lines_data)
         changed_fields.append("lines")
 
     invoice.save()
@@ -419,7 +437,10 @@ def apply_invoice_patch(invoice, data: dict, actor) -> Invoice:
         "INVOICE_UPDATED",
         "INVOICE",
         invoice.invoice_id,
-        evidence={"fields": sorted(changed_fields)},
+        evidence={
+            "fields": sorted(changed_fields),
+            "coding_changes": coding_changes,
+        },
     )
     return invoice
 
