@@ -101,19 +101,26 @@ export interface InvoiceLine {
   quantity: string
   unit_price: string
   amount: string
-  gl_account: string
-  department_id: string
+  gl_account: string | null
+  department_id: string | null
   gst_hst_code?: string
   pst_qst_code?: string
   line_type?: string
 }
 
+/**
+ * Contract §5.1 expects one suggestion per line. The current API returns a
+ * single invoice-level suggestion with `account_number`/`account_name`, so the
+ * type accepts both shapes and the UI renders whichever is present.
+ */
 export interface CodingSuggestion {
-  line_no: number
-  suggested_gl_account: string
-  suggested_department_id: string
-  confidence: string
+  line_no?: number
+  suggested_gl_account?: string
+  suggested_department_id?: string
+  confidence?: string | null
   reason: string
+  account_number?: string
+  account_name?: string
 }
 
 export interface Invoice {
@@ -177,7 +184,61 @@ export interface DashboardSummary {
   }
   pending_approvals: Approval[]
   payments_due: Payment[]
-  recent_activity: unknown[]
+  recent_activity: AuditEvent[]
+}
+
+export interface GLAccount {
+  account_number: string
+  name: string
+  account_type: string
+  notes: string
+}
+
+export interface AuditEvent {
+  id: string
+  actor_id: string | null
+  actor_name: string | null
+  on_behalf_of_id: string | null
+  action: string
+  entity_type: string
+  entity_id: string
+  before: Record<string, unknown> | null
+  after: Record<string, unknown> | null
+  evidence: Record<string, unknown> | null
+  timestamp: string
+}
+
+export interface CodingHistoryEntry {
+  line_no: number
+  gl_account: string | null
+  department_id: string | null
+  changed_by_id: string | null
+  changed_at: string
+  source: string
+}
+
+export interface InvoiceTrace {
+  invoice_id: string
+  invoice: Invoice
+  approvals: Approval[]
+  payments: Payment[]
+  coding_history: CodingHistoryEntry[]
+  events: AuditEvent[]
+}
+
+export interface AnalysisResponse {
+  validation_status: ValidationStatus
+  findings: Finding[]
+  coding_suggestions: CodingSuggestion[]
+  extraction: Record<string, unknown>
+}
+
+export interface InvoicePatch {
+  lines?: Array<{
+    line_no: number
+    gl_account?: string | null
+    department_id?: string | null
+  }>
 }
 
 // -------------------------------------
@@ -208,6 +269,15 @@ export interface InvoiceListParams extends PageParams {
   department_id?: string
   requester_id?: string
   q?: string
+}
+
+export interface AuditListParams extends PageParams {
+  entity_type?: string
+  entity_id?: string
+  actor_id?: string
+  action?: string
+  from?: string
+  to?: string
 }
 
 function buildQuery(params: object = {}): string {
@@ -285,10 +355,20 @@ export const invoiceService = {
   get: (id: string) =>
     api.get<Invoice>(`/invoices/${encodeURIComponent(id)}/`),
 
+  trace: (id: string) =>
+    api.get<InvoiceTrace>(
+      `/invoices/${encodeURIComponent(id)}/audit/`
+    ),
+
   upload: (file: File) => api.upload<Invoice>('/invoices/upload/', file),
 
+  patch: (id: string, body: InvoicePatch) =>
+    api.patch<Invoice>(`/invoices/${encodeURIComponent(id)}/`, body),
+
   analyze: (id: string) =>
-    api.post<unknown>(`/invoices/${encodeURIComponent(id)}/analyze/`),
+    api.post<AnalysisResponse>(
+      `/invoices/${encodeURIComponent(id)}/analyze/`
+    ),
 
   submit: (id: string) =>
     api.post<Invoice>(`/invoices/${encodeURIComponent(id)}/submit/`),
@@ -300,6 +380,25 @@ export const invoiceService = {
         finding_id: findingId,
         justification,
       }
+    ),
+}
+
+// -------------------------------------
+// REFERENCE DATA
+// -------------------------------------
+
+export const referenceService = {
+  glAccounts: () =>
+    api.get<PaginatedResponse<GLAccount>>(
+      `/gl-accounts/${buildQuery({
+        account_type: 'expense',
+        page_size: 100,
+      })}`
+    ),
+
+  departments: () =>
+    api.get<PaginatedResponse<Department>>(
+      `/departments/${buildQuery({ page_size: 100 })}`
     ),
 }
 
@@ -356,6 +455,18 @@ export const paymentService = {
 
   cancel: (id: string) =>
     api.post<Payment>(`/payments/${encodeURIComponent(id)}/cancel/`),
+}
+
+// -------------------------------------
+// AUDIT
+// -------------------------------------
+
+export const auditService = {
+  list: (params: AuditListParams = {}) =>
+    api.get<PaginatedResponse<AuditEvent>>(`/audit/${buildQuery(params)}`),
+
+  exportCsv: (params: AuditListParams = {}) =>
+    api.download(`/audit/export/${buildQuery(params)}`),
 }
 
 // -------------------------------------

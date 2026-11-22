@@ -47,15 +47,11 @@ import {
 } from './api/services'
 
 import { describeError, type ErrorPresentation } from './api/errors'
+import { canDecideApproval } from './auth/permissions'
 
 // --------------------------------------------------
 // HELPERS
 // --------------------------------------------------
-
-// Roles allowed to approve/reject by the contract (§2.2). The server enforces
-// this independently; the UI only avoids offering an action that will be
-// refused.
-const DECISION_ROLES = new Set<string>(['APPROVER', 'FINANCE_MANAGER'])
 
 type Scope = 'mine' | 'all'
 type StatusFilter = 'ALL' | ApprovalStatus
@@ -295,7 +291,7 @@ export default function Approvals({
     page * rowsPerPage + rowsPerPage
   )
 
-  const canDecideRole = DECISION_ROLES.has(user.role)
+  const canDecideRole = canDecideApproval(user.role)
   const isRequester = invoice?.requester_id === user.id
   const canDecide = canDecideRole && !isRequester
 

@@ -79,6 +79,30 @@ async function request<T>(
   return response.json() as Promise<T>
 }
 
+async function requestBlob(endpoint: string): Promise<Blob> {
+  const token = getToken()
+
+  const headers = new Headers()
+
+  if (token) {
+    headers.set('Authorization', `Bearer ${token}`)
+  }
+
+  const response = await fetch(`${API_BASE}${endpoint}`, { headers })
+
+  if (!response.ok) {
+    const body = await response.json().catch(() => null)
+
+    throw new ApiError(
+      body?.error?.message || 'Something went wrong',
+      body?.error?.code || 'UNKNOWN_ERROR',
+      response.status
+    )
+  }
+
+  return response.blob()
+}
+
 export const api = {
   get: <T>(endpoint: string) =>
     request<T>(endpoint),
@@ -104,4 +128,6 @@ export const api = {
       body: formData,
     })
   },
+
+  download: (endpoint: string) => requestBlob(endpoint),
 }

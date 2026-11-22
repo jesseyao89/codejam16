@@ -52,19 +52,14 @@ import {
 } from './api/services'
 
 import { describeError, type ErrorPresentation } from './api/errors'
+import {
+  canPreparePayment,
+  canReleasePayment,
+} from './auth/permissions'
 
 // --------------------------------------------------
 // HELPERS
 // --------------------------------------------------
-
-// Contract §2.2 / §8. The server enforces both; these sets only decide whether
-// the control is worth showing.
-const PREPARE_ROLES = new Set<string>([
-  'AP_CLERK',
-  'FINANCE_MANAGER',
-  'CONTROLLER',
-])
-const RELEASE_ROLES = new Set<string>(['FINANCE_MANAGER', 'CONTROLLER'])
 
 type PaymentGroup =
   | 'PREPARED'
@@ -232,8 +227,8 @@ export default function Payments({ user, onDataChanged }: PaymentsProps) {
   const [releaseError, setReleaseError] =
     useState<ErrorPresentation | null>(null)
 
-  const canPrepare = PREPARE_ROLES.has(user.role)
-  const canRelease = RELEASE_ROLES.has(user.role)
+  const canPrepare = canPreparePayment(user.role)
+  const canRelease = canReleasePayment(user.role)
 
   // --------------------------------------------------
   // LOAD PAYMENTS
