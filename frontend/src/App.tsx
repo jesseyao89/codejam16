@@ -6,8 +6,8 @@ import Payments from './Payments'
 import Settings from './Settings'
 import Login from './Login'
 import Audit from './Audit'
-
-import EmailAssistant from './EmailAssistant'
+import Inbox from './Inbox'
+import Vendors from './Vendors'
 
 import {
   authService,
@@ -21,6 +21,7 @@ import {
 import { getToken, clearToken } from './api/client'
 
 import {
+  canReadInbox,
   canUploadInvoice,
   canViewAudit,
 } from './auth/permissions'
@@ -69,6 +70,8 @@ import SettingsIcon from '@mui/icons-material/Settings'
 import RefreshIcon from '@mui/icons-material/Refresh'
 import LogoutIcon from '@mui/icons-material/Logout'
 import HistoryIcon from '@mui/icons-material/History'
+import InboxIcon from '@mui/icons-material/Inbox'
+import BusinessIcon from '@mui/icons-material/Business'
 
 import InvoiceDetails from './InvoiceDetails'
 import InvoiceUpload from './InvoiceUpload'
@@ -122,8 +125,13 @@ const menuItems: MenuItem[] = [
   { label: 'Invoices', icon: <ReceiptLongIcon /> },
   { label: 'Approvals', icon: <FactCheckIcon /> },
   { label: 'AI Review', icon: <SmartToyIcon /> },
-  { label: 'AI Email Assistant', icon: <SmartToyIcon /> },
+  {
+    label: 'AP Inbox',
+    icon: <InboxIcon />,
+    visible: canReadInbox,
+  },
   { label: 'Payments', icon: <PaymentsIcon /> },
+  { label: 'Vendors', icon: <BusinessIcon /> },
   {
     label: 'Audit Trail',
     icon: <HistoryIcon />,
@@ -436,6 +444,7 @@ function App() {
       setApiInvoices([])
       setDashboard(null)
       setSelectedInvoiceId(null)
+      setCurrentPage('Dashboard')
     }
   }
 
@@ -617,7 +626,9 @@ function App() {
 
           {/* API ERROR */}
 
-          {apiError && (
+          {(currentPage === 'Dashboard' ||
+            currentPage === 'Invoices') &&
+            apiError && (
             <Alert
               severity="error"
               sx={{ mb: 3 }}
@@ -639,7 +650,9 @@ function App() {
 
           {/* LOADING */}
 
-          {dataLoading && (
+          {(currentPage === 'Dashboard' ||
+            currentPage === 'Invoices') &&
+            dataLoading && (
             <Box sx={{ display: 'flex', gap: 2, mb: 3 }}>
               <CircularProgress size={20} />
               <Typography color="text.secondary">
@@ -1019,10 +1032,19 @@ function App() {
             <Approvals user={user} onDataChanged={refreshData} />
           )}
           {currentPage === 'AI Review' && <AIReview />}
-          {currentPage === 'AI Email Assistant' && <EmailAssistant />}
+          {currentPage === 'AP Inbox' && (
+            <Inbox
+              user={user}
+              onDataChanged={refreshData}
+              onOpenInvoice={(invoiceId) =>
+                setSelectedInvoiceId(invoiceId)
+              }
+            />
+          )}
           {currentPage === 'Payments' && (
             <Payments user={user} onDataChanged={refreshData} />
           )}
+          {currentPage === 'Vendors' && <Vendors />}
           {currentPage === 'Audit Trail' && canViewAudit(user.role) && (
             <Audit
               user={user}

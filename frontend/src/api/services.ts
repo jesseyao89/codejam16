@@ -57,6 +57,44 @@ export interface Vendor {
   status: string
 }
 
+export interface BankChange {
+  id: string
+  vendor_id: string
+  status: string | null
+  changed_at: string | null
+  requested_by_id: string | null
+  request_channel: string
+  verified_by_callback: string
+  old_account_last4: string | null
+  new_account_last4: string | null
+  decided_by_id: string | null
+  decided_at: string | null
+}
+
+export interface VendorDetail {
+  id: string
+  legal_name: string
+  category: string
+  default_gl_account: string | null
+  address: string
+  province_or_state: string
+  country: string
+  gst_hst_number: string
+  qst_number: string
+  payment_terms_days: number | null
+  early_pay_discount: string
+  preferred_payment_method: string
+  accepts_card_payment: string
+  bank_institution: string | null
+  bank_account_masked: string | null
+  bank_details_updated_at: string | null
+  ap_contact_email: string
+  requires_po: string
+  status: string
+  onboarded_at: string | null
+  pending_bank_change: BankChange | null
+}
+
 export interface Finding {
   finding_id: string
   code: string
@@ -172,6 +210,57 @@ export interface Payment {
   created_at: string | null
 }
 
+export type InboxClassification =
+  | 'INVOICE'
+  | 'NOT_INVOICE'
+  | 'UNCERTAIN'
+
+export type InboxStatus =
+  | 'NEW'
+  | 'INGESTED'
+  | 'PARTIAL'
+  | 'ROUTED'
+  | 'DISMISSED'
+
+export type InboxAttachmentStatus = 'NEW' | 'INGESTED' | 'FAILED'
+
+export interface InboxAttachment {
+  filename: string
+  content_type: string
+  order: number
+  status: InboxAttachmentStatus
+  invoice_id: string | null
+  error: string
+}
+
+export interface InboxEmail {
+  id: string
+  sender: string
+  from_name: string
+  subject: string
+  received_at: string
+  body_excerpt: string
+  attachment: { filename: string; content_type: string } | null
+  attachments: InboxAttachment[]
+  classification: InboxClassification
+  classification_confidence: string
+  invoice_id: string | null
+  invoice_ids: string[]
+  status: InboxStatus
+}
+
+export interface InboxSyncResult {
+  ingested: number
+  skipped: number
+  routed: number
+  failed?: number
+}
+
+export interface InboxIngestResult {
+  email: InboxEmail
+  invoices: Invoice[]
+}
+
 export interface DashboardSummary {
   role: string
   counts: {
@@ -268,6 +357,18 @@ export interface InvoiceListParams extends PageParams {
   vendor_id?: string
   department_id?: string
   requester_id?: string
+  q?: string
+}
+
+export interface InboxListParams extends PageParams {
+  classification?: InboxClassification
+  status?: InboxStatus
+  q?: string
+}
+
+export interface VendorListParams extends PageParams {
+  status?: string
+  category?: string
   q?: string
 }
 
@@ -380,6 +481,53 @@ export const invoiceService = {
         finding_id: findingId,
         justification,
       }
+    ),
+}
+
+// -------------------------------------
+// AP INBOX
+// -------------------------------------
+
+export const inboxService = {
+  list: (params: InboxListParams = {}) =>
+    api.get<PaginatedResponse<InboxEmail>>(`/inbox/${buildQuery(params)}`),
+
+  get: (id: string) =>
+    api.get<InboxEmail>(`/inbox/${encodeURIComponent(id)}/`),
+
+  sync: () => api.post<InboxSyncResult>('/inbox/sync/'),
+
+  ingest: (id: string, attachmentFilename?: string) =>
+    api.post<InboxIngestResult>(
+      `/inbox/${encodeURIComponent(id)}/ingest/`,
+      attachmentFilename ? { attachment: attachmentFilename } : {}
+    ),
+
+  dismiss: (id: string) =>
+    api.post<void>(`/inbox/${encodeURIComponent(id)}/dismiss/`),
+}
+
+// -------------------------------------
+// VENDORS
+// -------------------------------------
+
+export const vendorService = {
+  list: (params: VendorListParams = {}) =>
+    api.get<PaginatedResponse<VendorDetail>>(
+      `/vendors/${buildQuery(params)}`
+    ),
+
+  get: (id: string) =>
+    api.get<VendorDetail>(`/vendors/${encodeURIComponent(id)}/`),
+
+  bankChanges: (id: string) =>
+    fetchAllPages((page) =>
+      api.get<PaginatedResponse<BankChange>>(
+        `/vendors/${encodeURIComponent(id)}/bank-changes/${buildQuery({
+          page,
+          page_size: ALL_PAGES_SIZE,
+        })}`
+      )
     ),
 }
 

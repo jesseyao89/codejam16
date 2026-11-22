@@ -1,10 +1,12 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 
 import {
   Alert,
   Box,
+  Button,
   Card,
   Chip,
+  CircularProgress,
   Divider,
   InputAdornment,
   List,
@@ -31,6 +33,13 @@ import LockOutlinedIcon from '@mui/icons-material/LockOutlined'
 import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircle'
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined'
 
+import {
+  referenceService,
+  type Department,
+} from './api/services'
+
+import { describeError, type ErrorPresentation } from './api/errors'
+
 type Section = 'General' | 'Approvals' | 'Payments' | 'Departments'
 
 type Policy = {
@@ -44,27 +53,26 @@ const approvalPolicies: Policy[] = [
   {
     id: 'P01',
     condition: 'Up to $10,000 CAD',
-    required: 'Department Manager',
-    notes: 'Standard departmental approval',
+    required: 'Department approver',
+    notes: "Within the department manager's limit",
   },
   {
     id: 'P02',
     condition: 'Over $10,000 CAD',
-    required: 'Department Manager → Finance Manager',
-    notes: 'Additional finance review',
+    required: 'Department approver → Finance Manager',
+    notes: 'Above the department limit',
   },
   {
     id: 'P03',
-    condition: 'Over $50,000 CAD',
-    required: 'Department Manager → Finance Manager → Controller',
-    notes: 'Controller approval required',
+    condition: 'New or on-hold vendor',
+    required: 'Department approver → Finance Manager',
+    notes: 'Additional finance review',
   },
   {
     id: 'P04',
-    condition: 'Over $250,000 CAD',
-    required:
-      'Department Manager → Finance Manager → Controller → CFO',
-    notes: 'Executive approval required',
+    condition: 'Legal invoices',
+    required: 'Department approver → Finance Manager',
+    notes: 'Finance review required by policy',
   },
 ]
 
@@ -124,70 +132,12 @@ const paymentControls = [
   },
 ]
 
-const departments = [
-  {
-    id: 'D01',
-    name: 'Operations',
-    costCentre: '1100',
-    budget: 1800000,
-  },
-  {
-    id: 'D02',
-    name: 'Sales',
-    costCentre: '1200',
-    budget: 420000,
-  },
-  {
-    id: 'D03',
-    name: 'Marketing',
-    costCentre: '1300',
-    budget: 380000,
-  },
-  {
-    id: 'D04',
-    name: 'Finance',
-    costCentre: '1400',
-    budget: 260000,
-  },
-  {
-    id: 'D05',
-    name: 'IT',
-    costCentre: '1500',
-    budget: 540000,
-  },
-  {
-    id: 'D06',
-    name: 'People & Culture',
-    costCentre: '1600',
-    budget: 210000,
-  },
-  {
-    id: 'D07',
-    name: 'Facilities',
-    costCentre: '1700',
-    budget: 720000,
-  },
-  {
-    id: 'D08',
-    name: 'Executive',
-    costCentre: '1800',
-    budget: 300000,
-  },
-]
-
 const navigation = [
   { label: 'General', icon: <TuneIcon /> },
   { label: 'Approvals', icon: <FactCheckIcon /> },
   { label: 'Payments', icon: <AccountBalanceIcon /> },
   { label: 'Departments', icon: <BusinessIcon /> },
 ] as const
-
-const formatMoney = (amount: number) =>
-  new Intl.NumberFormat('en-CA', {
-    style: 'currency',
-    currency: 'CAD',
-    maximumFractionDigits: 0,
-  }).format(amount)
 
 function SectionHeading({
   title,
@@ -343,7 +293,7 @@ function ControlList({
             </Box>
 
             <Chip
-              label="Configured"
+              label="Reference"
               size="small"
               sx={{
                 backgroundColor: '#E8F5EC',
@@ -363,12 +313,46 @@ export default function Settings() {
   const [activeSection, setActiveSection] = useState<Section>('General')
   const [departmentSearch, setDepartmentSearch] = useState('')
 
-  const filteredDepartments = departments.filter((department) => {
+  const [departmentList, setDepartmentList] = useState<Department[]>([])
+  const [departmentsLoading, setDepartmentsLoading] = useState(true)
+  const [departmentsError, setDepartmentsError] =
+    useState<ErrorPresentation | null>(null)
+  const [departmentReloadToken, setDepartmentReloadToken] = useState(0)
+
+  useEffect(() => {
+    let cancelled = false
+
+    referenceService
+      .departments()
+      .then((response) => {
+        if (cancelled) return
+        setDepartmentList(response.results)
+        setDepartmentsError(null)
+        setDepartmentsLoading(false)
+      })
+      .catch((err) => {
+        if (cancelled) return
+        setDepartmentsError(describeError(err))
+        setDepartmentsLoading(false)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [departmentReloadToken])
+
+  function retryDepartments() {
+    setDepartmentsLoading(true)
+    setDepartmentsError(null)
+    setDepartmentReloadToken((token) => token + 1)
+  }
+
+  const filteredDepartments = departmentList.filter((department) => {
     const query = departmentSearch.toLowerCase().trim()
 
     return (
       department.name.toLowerCase().includes(query) ||
-      department.costCentre.includes(query) ||
+      (department.cost_centre ?? '').includes(query) ||
       department.id.toLowerCase().includes(query)
     )
   })
@@ -384,7 +368,7 @@ export default function Settings() {
           mt: -2,
         }}
       >
-        Manage your organization's accounts payable configuration.
+        Review your organization's accounts payable configuration.
       </Typography>
 
       {/* COMPACT SETTINGS LAYOUT */}
@@ -485,7 +469,7 @@ export default function Settings() {
                   ['Environment', 'Hackathon Demo'],
                   ['Dataset', 'Harborline Logistics (Synthetic)'],
                   ['Currency', 'CAD'],
-                  ['Policy Configuration', 'Read-only'],
+                  ['Policy Configuration', 'Reference only (API pending)'],
                   ['Payment Execution', 'Simulation Only'],
                 ].map(([label, value], index) => (
                   <Box key={label}>
@@ -542,6 +526,12 @@ export default function Settings() {
                 description="Review invoice approval requirements and internal controls."
               />
 
+              <Alert severity="info" sx={{ mb: 3 }}>
+                Illustrative configuration. The approval-policy API is not
+                available in this backend build, so these thresholds are not
+                read from or enforced by the routing engine.
+              </Alert>
+
               <Typography
                 variant="subtitle2"
                 sx={{
@@ -577,6 +567,12 @@ export default function Settings() {
                 title="Payment Controls"
                 description="Review payment authorization and security requirements."
               />
+
+              <Alert severity="info" sx={{ mb: 3 }}>
+                Illustrative configuration. Policy administration is not
+                connected to the backend in this build; the release rules below
+                describe the intended controls, not a configurable API.
+              </Alert>
 
               <Typography
                 variant="subtitle2"
@@ -648,79 +644,121 @@ export default function Settings() {
 }}
               />
 
-              <TableContainer
-                component={Card}
-                variant="outlined"
-                sx={{
-                  borderColor: '#E2E6EF',
-                  boxShadow: 'none',
-                }}
-              >
-                <Table size="small">
-                  <TableHead
-                    sx={{ backgroundColor: '#F4F6FA' }}
-                  >
-                    <TableRow>
-                      <TableCell sx={{ fontWeight: 700 }}>
-                        Department
-                      </TableCell>
-
-                      <TableCell sx={{ fontWeight: 700 }}>
-                        Cost Centre
-                      </TableCell>
-
-                      <TableCell
-                        align="right"
-                        sx={{ fontWeight: 700 }}
-                      >
-                        Annual Budget
-                      </TableCell>
-                    </TableRow>
-                  </TableHead>
-
-                  <TableBody>
-                    {filteredDepartments.map((department) => (
-                      <TableRow key={department.id} hover>
-                        <TableCell
-                          sx={{
-                            fontWeight: 600,
-                            color: '#263451',
-                            py: 1.8,
-                          }}
-                        >
-                          {department.name}
-                        </TableCell>
-
-                        <TableCell sx={{ color: '#667085' }}>
-                          {department.costCentre}
-                        </TableCell>
-
-                        <TableCell
-                          align="right"
-                          sx={{
-                            fontWeight: 600,
-                            color: '#404D73',
-                          }}
-                        >
-                          {formatMoney(department.budget)}
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </TableContainer>
-
-              {filteredDepartments.length === 0 && (
-                <Typography
-                  variant="body2"
+              {departmentsLoading ? (
+                <Box
                   sx={{
-                    textAlign: 'center',
-                    color: '#667085',
-                    mt: 3,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 2,
+                    p: 3,
                   }}
                 >
-                  No departments match your search.
-                </Typography>
+                  <CircularProgress size={20} />
+
+                  <Typography color="text.secondary">
+                    Loading departments...
+                  </Typography>
+                </Box>
+              ) : departmentsError ? (
+                <Alert
+                  severity="error"
+                  action={
+                    <Button
+                      color="inherit"
+                      size="small"
+                      onClick={retryDepartments}
+                    >
+                      Retry
+                    </Button>
+                  }
+                >
+                  <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                    Could not load departments ({departmentsError.code})
+                  </Typography>
+
+                  <Typography variant="body2">
+                    {departmentsError.message}
+                  </Typography>
+                </Alert>
+              ) : (
+                <>
+                  <TableContainer
+                    component={Card}
+                    variant="outlined"
+                    sx={{
+                      borderColor: '#E2E6EF',
+                      boxShadow: 'none',
+                    }}
+                  >
+                    <Table size="small">
+                      <TableHead
+                        sx={{ backgroundColor: '#F4F6FA' }}
+                      >
+                        <TableRow>
+                          <TableCell sx={{ fontWeight: 700 }}>
+                            Department
+                          </TableCell>
+
+                          <TableCell sx={{ fontWeight: 700 }}>
+                            Cost Centre
+                          </TableCell>
+
+                          <TableCell
+                            align="right"
+                            sx={{ fontWeight: 700 }}
+                          >
+                            Annual Budget
+                          </TableCell>
+                        </TableRow>
+                      </TableHead>
+
+                      <TableBody>
+                        {filteredDepartments.map((department) => (
+                          <TableRow key={department.id} hover>
+                            <TableCell
+                              sx={{
+                                fontWeight: 600,
+                                color: '#263451',
+                                py: 1.8,
+                              }}
+                            >
+                              {department.name}
+                            </TableCell>
+
+                            <TableCell sx={{ color: '#667085' }}>
+                              {department.cost_centre ?? '—'}
+                            </TableCell>
+
+                            <TableCell
+                              align="right"
+                              sx={{
+                                fontWeight: 600,
+                                color: '#404D73',
+                              }}
+                            >
+                              {department.annual_budget_cad
+                                ? `CAD ${department.annual_budget_cad}`
+                                : '—'}
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </TableContainer>
+
+                  {filteredDepartments.length === 0 && (
+                    <Typography
+                      variant="body2"
+                      sx={{
+                        textAlign: 'center',
+                        color: '#667085',
+                        mt: 3,
+                      }}
+                    >
+                      No departments match your search.
+                    </Typography>
+                  )}
+                </>
               )}
             </>
           )}

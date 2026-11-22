@@ -30,6 +30,28 @@ export const RELEASE_PAYMENT_ROLES = new Set<string>([
 
 export const AUDIT_ROLES = new Set<string>(['CONTROLLER', 'AUDITOR'])
 
+export const INBOX_READ_ROLES = new Set<string>([
+  'AP_CLERK',
+  'FINANCE_MANAGER',
+  'CONTROLLER',
+  'AUDITOR',
+])
+
+export const INBOX_WRITE_ROLES = new Set<string>([
+  'AP_CLERK',
+  'FINANCE_MANAGER',
+  'CONTROLLER',
+])
+
+export const VENDOR_WRITE_ROLES = new Set<string>([
+  'FINANCE_MANAGER',
+  'CONTROLLER',
+])
+
+export const POLICY_ADMIN_ROLES = new Set<string>(['CONTROLLER'])
+
+export const USER_ADMIN_ROLES = new Set<string>(['CONTROLLER'])
+
 export const EDITABLE_INVOICE_STATUSES = new Set<string>([
   'DRAFT',
   'REVIEW',
@@ -89,4 +111,24 @@ export function canReleasePayment(role: UserRole | string): boolean {
 
 export function canViewAudit(role: UserRole | string): boolean {
   return AUDIT_ROLES.has(role)
+}
+
+export function canReadInbox(role: UserRole | string): boolean {
+  return INBOX_READ_ROLES.has(role)
+}
+
+export function canManageInbox(role: UserRole | string): boolean {
+  return INBOX_WRITE_ROLES.has(role)
+}
+
+export function canManageVendors(role: UserRole | string): boolean {
+  return VENDOR_WRITE_ROLES.has(role)
+}
+
+export function canEditPolicies(role: UserRole | string): boolean {
+  return POLICY_ADMIN_ROLES.has(role)
+}
+
+export function canManageUsers(role: UserRole | string): boolean {
+  return USER_ADMIN_ROLES.has(role)
 }
