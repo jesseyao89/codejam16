@@ -54,8 +54,9 @@ every role; usernames are case-sensitive.
 
 ## Implementation note
 
-The demo password is set by the dataset seed (`load_dataset`, or a dedicated
-`seed_demo_passwords` command) with `user.set_password("demo1234")`. The current
-loader calls `set_unusable_password()` when it creates a user, so login will
-fail until that step is changed. These are fake credentials for synthetic data —
+The demo password is set by `load_dataset` with `user.set_password(...)` on every
+run, so re-seeding also repairs existing accounts. The password comes from the
+`DEMO_PASSWORD` environment variable (default `demo1234`; see
+`backend/.env.example`). Authentication is DRF token auth sent as
+`Authorization: Bearer <token>`. These are fake credentials for synthetic data —
 never reuse them outside the demo.

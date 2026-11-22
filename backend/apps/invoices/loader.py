@@ -13,6 +13,8 @@ from datetime import date, datetime, timezone
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
+from django.conf import settings
+
 from apps.accounts.models import Department, User
 from apps.approvals.models import ApprovalPolicy, ApprovalStep
 from apps.invoices.models import FXRate, GLAccount, Invoice, InvoiceLine, TaxCode
@@ -145,12 +147,15 @@ class Loader:
             last_name = parts[1] if len(parts) > 1 else ""
             status = _string(row.get("status"), "active")
 
-            user, created = User.objects.get_or_create(
+            user, _ = User.objects.get_or_create(
                 username=user_id,
                 defaults={"user_id": user_id},
             )
-            if created:
-                user.set_unusable_password()
+            # Demo-only: every seeded user shares the documented fake password
+            # so the synthetic accounts can log in (docs/DEMO_USERS.md, contract
+            # §2.1). Set unconditionally so re-running the loader fixes rows
+            # created before this behaviour existed.
+            user.set_password(settings.DEMO_PASSWORD)
             user.user_id = user_id
             user.email = _string(row.get("email"))
             user.first_name = first_name

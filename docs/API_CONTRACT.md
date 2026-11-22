@@ -169,9 +169,10 @@ shared, fake password for every seeded user: `demo1234`.
 
 Response: `{ "token": "<opaque DRF token>", "user": { … } }`; send
 `Authorization: Bearer <token>` afterwards. These are synthetic accounts — never
-use this password outside the demo. The seed command must set it for each seeded
-user (the current loader sets an unusable password, so this is a backend task).
-There is no signup endpoint. The same table is kept in `docs/DEMO_USERS.md`.
+use this password outside the demo. The seed sets it for each user from the
+`DEMO_PASSWORD` environment variable (default `demo1234`; see
+`backend/.env.example`). There is no signup endpoint. The same table is kept in
+`docs/DEMO_USERS.md`.
 
 **User**
 

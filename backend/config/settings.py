@@ -45,6 +45,7 @@ INSTALLED_APPS = [
     "django.contrib.staticfiles",
     # Third party
     "rest_framework",
+    "rest_framework.authtoken",
     # Local
     "apps.accounts",
     "apps.vendors",
@@ -117,6 +118,10 @@ AUTH_PASSWORD_VALIDATORS = [
 # Custom user model. MUST be set before the first migration (AGENTS.md §3).
 AUTH_USER_MODEL = "accounts.User"
 
+# Demo auth: every seeded user shares this fake password (docs/DEMO_USERS.md,
+# docs/API_CONTRACT.md §2.1). Synthetic data only — never reuse outside the demo.
+DEMO_PASSWORD = os.environ.get("DEMO_PASSWORD", "demo1234")
+
 
 # Internationalization
 # https://docs.djangoproject.com/en/5.2/topics/i18n/
@@ -146,12 +151,16 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": [
+        # Contract: `Authorization: Bearer <token>` (docs/API_CONTRACT.md §2).
+        "apps.accounts.authentication.BearerTokenAuthentication",
         "rest_framework.authentication.SessionAuthentication",
         "rest_framework.authentication.BasicAuthentication",
     ],
     "DEFAULT_PERMISSION_CLASSES": [
         "rest_framework.permissions.IsAuthenticated",
     ],
+    # Every 4xx/5xx returns the contract error envelope (docs/API_CONTRACT.md §1.2).
+    "EXCEPTION_HANDLER": "apps.accounts.exceptions.api_exception_handler",
     "TEST_REQUEST_DEFAULT_FORMAT": "json",
 }
 
