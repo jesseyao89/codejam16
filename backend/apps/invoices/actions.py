@@ -14,7 +14,7 @@ from uuid import uuid4
 
 from django.conf import settings
 from django.db import transaction
-from django.db.models import Max
+from django.db.models import Max, Q
 from django.utils import timezone
 from rest_framework.exceptions import NotFound, ValidationError
 
@@ -78,10 +78,28 @@ def visible_invoices(user):
     )
     if user.role in _FULL_READ_ROLES:
         return queryset
+
+    is_active = user.is_active and user.status == "active"
+    delegated = Q(
+        approval_steps__approver__delegate=user,
+        approval_steps__approver__status="on_leave",
+    )
     if user.role == "APPROVER":
-        return queryset.filter(department=user.department)
+        # Own department, plus invoices where they are an assigned approver or
+        # an active delegate (covers cross-department escalation).
+        clauses = Q(department=user.department) | Q(
+            approval_steps__approver=user
+        )
+        if is_active:
+            clauses |= delegated
+        return queryset.filter(clauses).distinct()
     if user.role == "EMPLOYEE":
-        return queryset.filter(requester=user)
+        clauses = Q(requester=user)
+        if is_active:
+            clauses |= delegated
+        return queryset.filter(clauses).distinct()
+    if is_active:
+        return queryset.filter(delegated).distinct()
     return queryset.none()
 
 
@@ -90,9 +108,14 @@ def dashboard_summary(user) -> dict:
     visible = visible_invoices(user)
     visible_ids = visible.values_list("invoice_id", flat=True)
 
+    action_filter = Q(pk__in=[])
+    if user.is_active and user.status == "active":
+        action_filter = Q(approver=user) | Q(
+            approver__delegate=user, approver__status="on_leave"
+        )
     pending_approvals = (
         ApprovalStep.objects.filter(
-            approver=user,
+            action_filter,
             action="",
             invoice__status=Invoice.Status.PENDING_APPROVAL,
         )
@@ -615,57 +638,10 @@ def _next_approval_ids(count: int) -> list[str]:
 
 
 def build_approval_chain(invoice, start_step_no: int = 1) -> list[ApprovalStep]:
-    """Deterministic baseline routing (docs/decisions.md).
+    """Build the chain from the active policies (or the baseline fallback)."""
+    from apps.approvals import policy
 
-    The first step is the department manager (escalated past a self-approval);
-    the next is FINANCE_MANAGER when the amount exceeds the manager's limit or
-    the vendor is not active. The full structured policy engine is a later
-    slice. ``start_step_no`` keeps the step numbers increasing across resubmits.
-    """
-    amount_cad = invoice.total_cad if invoice.total_cad is not None else invoice.total
-
-    manager = invoice.department.manager if invoice.department else None
-    requester = invoice.requester
-    approver = manager if (manager and manager != requester) else None
-    if manager is None and requester and requester.manager:
-        approver = requester.manager
-
-    steps = [
-        ApprovalStep(
-            invoice=invoice,
-            step_no=start_step_no,
-            approver=approver,
-            approver_role=User.Role.APPROVER,
-            action="",
-        )
-    ]
-
-    needs_finance = invoice.vendor is None or invoice.vendor.status != Vendor.Status.ACTIVE
-    if (
-        manager
-        and manager.approval_limit_cad is not None
-        and amount_cad is not None
-    ):
-        needs_finance = needs_finance or amount_cad > manager.approval_limit_cad
-
-    if needs_finance:
-        finance = (
-            User.objects.filter(
-                role=User.Role.FINANCE_MANAGER, status=User.Status.ACTIVE
-            )
-            .order_by("user_id")
-            .first()
-        )
-        steps.append(
-            ApprovalStep(
-                invoice=invoice,
-                step_no=start_step_no + 1,
-                approver=finance,
-                approver_role=User.Role.FINANCE_MANAGER,
-                action="",
-            )
-        )
-
+    steps = policy.build_chain(invoice, start_step_no)
     for step, approval_id in zip(steps, _next_approval_ids(len(steps))):
         step.approval_id = approval_id
     return steps

@@ -8,6 +8,7 @@ step can be acted on.
 from __future__ import annotations
 
 from django.db import transaction
+from django.db.models import Q
 from django.utils import timezone
 from rest_framework.exceptions import PermissionDenied
 
@@ -20,11 +21,27 @@ _ACTIVE_DELEGATE = "on_leave"
 
 
 def approvals_visible_to(user):
-    """Approval steps on invoices the user is allowed to see."""
+    """Approval steps on visible invoices plus steps assigned to the caller.
+
+    Including assigned/delegated steps means an escalated approver or a
+    delegate outside the invoice's department can still see and act on the
+    step.
+    """
     from apps.invoices.actions import visible_invoices
 
     invoice_ids = visible_invoices(user).values_list("invoice_id", flat=True)
-    return ApprovalStep.objects.filter(invoice_id__in=invoice_ids)
+    assigned = Q(approver=user)
+    if user.is_active and user.status == "active":
+        assigned |= Q(approver__delegate=user, approver__status="on_leave")
+    # Unassigned role steps stay scoped to invoices the role may already see.
+    role_fallback = Q(
+        approver__isnull=True,
+        approver_role=user.role,
+        invoice_id__in=invoice_ids,
+    )
+    return ApprovalStep.objects.filter(
+        Q(invoice_id__in=invoice_ids) | assigned | role_fallback
+    )
 
 
 def current_pending_step(invoice):
@@ -35,23 +52,25 @@ def current_pending_step(invoice):
 
 def _resolve_actor(step, user):
     """Return the principal when acting as a delegate, else ``None``."""
+    # Status is checked on every action (AGENTS §5): on-leave/terminated users
+    # must act through an active delegate and may not use their own token.
+    if not user.is_active or user.status != "active":
+        raise PermissionDenied(
+            "Your account is not active; approvals must use a delegate."
+        )
+
     if step.approver_id is not None:
         if step.approver_id == user.id:
             return None
         if (
             step.approver.delegate_id == user.id
             and step.approver.status == _ACTIVE_DELEGATE
-            and user.status == "active"
         ):
             return step.approver
         raise PermissionDenied("You are not the approver for this step.")
 
     # Unassigned step: fall back to any active user with the required role.
-    if (
-        step.approver_role
-        and user.role == step.approver_role
-        and user.status == "active"
-    ):
+    if step.approver_role and user.role == step.approver_role:
         return None
     raise PermissionDenied("You are not the approver for this step.")
 

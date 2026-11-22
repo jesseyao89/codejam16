@@ -202,10 +202,10 @@ Legend: ✅ allowed · ❌ forbidden · ⚠️ conditional (see notes) · — no
 | Capability | Employee | AP Clerk | Approver | Finance Mgr | Controller | Auditor |
 |---|---|---|---|---|---|---|
 | Submit / upload invoices | ✅ own dept | ✅ | ✅ own dept | ✅ | ✅ | ❌ |
-| See invoices | own dept | all | own dept | all | all | all (read) |
+| See invoices | own dept | all | own dept + assigned approval steps | all | all | all (read) |
 | Correct coding / review extraction | ❌ | ✅ | ❌ | ✅ | ✅ | ❌ |
 | Resolve `WARNING` findings | ❌ | ✅ | ❌ | ✅ | ✅ | ❌ |
-| Approve / reject | ❌ | ❌ | ⚠️ own dept ≤ limit | ⚠️ above limit / flagged / new vendor | — | ❌ |
+| Approve / reject | ❌ | ❌ | ⚠️ own dept ≤ limit, or assigned step | ⚠️ above limit / flagged / new vendor | ⚠️ large amounts per policy | ❌ |
 | Prepare payment | ❌ | ✅ | ❌ | ✅ | ✅ | ❌ |
 | Release payment | ❌ | ❌ | ❌ | ⚠️ ≤ CAD 100,000 | ✅ any | ❌ |
 | Vendor onboard / approve / hold | ❌ | ❌ | ❌ | ✅ | ✅ | ❌ |
@@ -222,12 +222,15 @@ Universal rules override the table:
   payment (applies to `APPROVER`, `FINANCE_MANAGER` and `CONTROLLER`).
 - Delegated actions are recorded as delegated (`delegated_for_id` /
   `on_behalf_of_id`).
-- Inactive / terminated users cannot act; active delegation is checked on every
-  action.
+- Inactive / terminated users cannot act; on-leave users act only through an
+  active delegate. Delegation is checked on every action.
 - Lists are server-scoped: a role never receives rows it may not see. The UI
   hiding a control is never the enforcement.
-- `CONTROLLER` is not an approval-routing target; policies route to `APPROVER`
-  then `FINANCE_MANAGER`.
+- `CONTROLLER` may be an approval step for large amounts per policy (P03/P04);
+  the separation-of-duties rules still apply.
+- An approver assigned a step (including cross-department escalation) can see
+  that invoice; an active delegate can see the step and its invoice while the
+  principal is on leave. Unrelated cross-department invoices stay hidden.
 
 ## 3. Reference data (departments, GL accounts, tax codes)
 
@@ -768,17 +771,15 @@ DELETE /api/policies/{id}/     -> 204                (CONTROLLER; soft-archive, 
 
 ```json
 {
-  "id": "POL-01",
-  "name": "Operations over 25k",
-  "priority": 10,
+  "id": "POL-P02",
+  "name": "Over 10,000 CAD",
+  "priority": 20,
   "active": true,
   "conditions": {
-    "min_amount_cad": "25000.00",
-    "max_amount_cad": null,
-    "department_id": "D01",
-    "vendor_status": "active",
-    "legal_invoice": false,
-    "new_vendor": false
+    "match": "all",
+    "rules": [
+      { "field": "invoice.total_cad", "op": "gt", "value": "10000" }
+    ]
   },
   "steps": [
     { "step_no": 1, "role": "APPROVER", "approver_id": null },
@@ -787,7 +788,41 @@ DELETE /api/policies/{id}/     -> 204                (CONTROLLER; soft-archive, 
 }
 ```
 
-Every policy create/update/delete writes an audit event with before/after.
+- **Conditions are a bounded list**, not arbitrary expressions. `match` is
+  `all` or `any`; each rule has a whitelisted `field`, an allowed `op`, and a
+  typed `value` (max 20 rules).
+- Fields: `invoice.total_cad`, `invoice.currency`, `invoice.ship_to_province`,
+  `invoice.has_po`, `invoice.has_contract`, `invoice.is_credit_note`,
+  `invoice.department_id`, `invoice.requester_id`, `vendor.status`,
+  `vendor.category`, `vendor.province_or_state`, `vendor.requires_po`,
+  `vendor.is_new`, `vendor.onboarded_at`, `requester.role`,
+  `requester.department_id`.
+- Operators: `eq`, `ne`, `gt`, `gte`, `lt`, `lte`, `in`, `not_in`, `contains`,
+  `is_null`, `is_not_null` (type-restricted); strings compare
+  case-insensitively, money as decimals, dates as ISO dates. A null field only
+  matches `is_null`.
+- `vendor.is_new` = vendor `pending_review` or onboarded within 90 days.
+  `legal_invoice` is vendor category `Legal` (per `approval_policies.csv`).
+- **Engine**: all active matching policies are merged (priority order); a
+  department-manager step and the "amount above the manager's limit → finance"
+  invariant are always ensured (finance is placed before any controller step);
+  duplicate role/approver steps are removed; self-approval escalates to the
+  manager's manager. If no policy matches, the baseline chain is used. Policies
+  with no steps are reference rows and are never executed.
+- Steps are sequential (`step_no` assigned 1..n); `role` ∈ `APPROVER`,
+  `FINANCE_MANAGER`, `CONTROLLER`; optional `approver_id` must reference an
+  enabled user (`is_active=true`) whose role matches the step role, with status
+  `active` or `on_leave` plus an active delegate. An active policy requires at
+  least one step.
+- The resulting `Approval.reason` reflects the policy name (e.g.
+  `"Policy Over 10,000 CAD"`).
+- `DELETE` soft-archives (`active=false`); every create/update/delete is audited.
+- `manage.py seed_policies` seeds the P01–P06 structured defaults (idempotent;
+  never overwrites edits). The prose `approval_policies.csv` rows remain loaded
+  as inactive reference.
+- `rule_type=payment_release` and `rule_type=match` are **not** approval
+  policies: payment release limits/separation live in `/api/payments/`, and
+  PO/contract matching lives in invoice validation.
 
 ### 7.3 Delegation
 

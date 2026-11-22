@@ -156,6 +156,56 @@ already `PAID`, and §13 normalization mappings.
 - **Audit.** `VENDOR_ONBOARDED/UPDATED/APPROVED/HELD/UNHELD` and
   `BANK_CHANGE_REQUESTED/APPROVED/REJECTED`.
 
+## Approval policies (Nov 2026)
+
+- **Structured, bounded conditions.** Policies are editable data (`/api/policies/`)
+  with a flat whitelisted `{field, op, value}` list (`match: all|any`), not
+  arbitrary expressions. This covers amount tiers, vendor status/category,
+  currency, province, PO/contract presence, credit notes and requester fields
+  while staying deterministic and testable.
+- **Seeding.** `seed_policies` creates P01–P06 structured defaults by fixed ID
+  (`get_or_create`; never overwrites edits). The dataset's prose rows stay
+  inactive reference. `payment_release` and `match` rows remain handled in
+  payments and validation, not the approval engine.
+- **Engine.** Additive merge of matching policies by priority, dedupe by
+  `(role, approver)`, invariant manager step + finance above the manager's
+  limit, self-approval escalation, baseline fallback. `ApprovalStep.reason`
+  records the policy that produced each step.
+- **Partial updates.** A `PATCH` that omits `conditions`/`steps` leaves them
+  untouched; only an explicit `null` conditions value means "no conditions".
+- **Manager resolution.** Terminated managers, and on-leave managers without an
+  active delegate, escalate up the management chain; on-leave managers with a
+  delegate stay on the step and the delegate acts. Only approver-capable roles
+  (`APPROVER`, `FINANCE_MANAGER`, `CONTROLLER`) are assigned. Escalated
+  approvers and active delegates can see and act on invoices outside their own
+  department; unrelated cross-department invoices stay hidden.
+- **Actions require an active principal.** `status=on_leave`/`terminated` or
+  `is_active=False` users cannot approve directly, even for a step assigned to
+  them — the delegate acts and the step records `delegated_for`.
+- **Malformed policies fail closed.** Stored policies with a non-object
+  `conditions`/malformed `rules` never match, rather than becoming
+  unconditional.
+- **Definitions.** `new_vendor` = `pending_review` or onboarded within 90 days;
+  `legal_invoice` = vendor category `Legal` (per `approval_policies.csv`, not GL).
+- **Controller routing.** P03/P04 add `CONTROLLER` steps for large amounts; this
+  supersedes the earlier "Controller is not a routing target" note. Separation of
+  duties still blocks approving your own request or releasing your own approval.
+- **CFO.** P04's `cfo` maps to `CONTROLLER` (the six-role model has no CFO).
+
+### Policy engine known limitations
+
+- A department with no resolvable approver (no manager chain) still creates an
+  unassigned `APPROVER` step; a large invoice there is not automatically
+  escalated to finance unless the amount is missing CAD or the vendor is not
+  active. The sample data always resolves a manager.
+- Generated `rule_id`s use 8 hex characters; a collision would fail the create
+  (no retry loop), which is acceptable at demo scale.
+- Merging many policies can exceed the per-policy 10-step cap; the engine does
+  not cap the merged chain.
+- Each submit evaluates policies and resolves approvers with a handful of
+  queries (`lines` existence, per-step user lookups); fine at 50 invoices/month
+  and small at 100x, but worth caching if submit is ever batched.
+
 ## Known limitations / next steps
 
 - Extraction is **text-PDF only** (no OCR, no proven French/scan support) and

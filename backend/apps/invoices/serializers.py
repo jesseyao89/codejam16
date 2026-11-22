@@ -149,8 +149,12 @@ class ApprovalStepSerializer(serializers.ModelSerializer):
         return obj.delegated_for.user_id if obj.delegated_for else None
 
     def get_reason(self, obj):
+        if obj.reason:
+            return obj.reason
         if obj.approver_role == "FINANCE_MANAGER":
             return "Above limit or requires finance review"
+        if obj.approver_role == "CONTROLLER":
+            return "Controller"
         return "Department manager"
 
     def get_comment(self, obj):
