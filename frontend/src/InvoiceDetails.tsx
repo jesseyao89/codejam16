@@ -53,6 +53,7 @@ import {
 } from './api/services'
 
 import { describeError, type ErrorPresentation } from './api/errors'
+import FindingList from './Findings'
 
 import {
   canEditInvoice,
@@ -1361,118 +1362,14 @@ export default function InvoiceDetails({
                       this does not prove that skipped checks passed.
                     </Alert>
                   ) : (
-                    invoice.findings.map((finding) => (
-                      <Box
-                        key={finding.finding_id}
-                        sx={{
-                          border: '1px solid #E5E7EB',
-                          borderLeft:
-                            finding.severity === 'BLOCK'
-                              ? '5px solid #B42318'
-                              : '5px solid #B86B00',
-                          borderRadius: 1,
-                          p: 2,
-                        }}
-                      >
-                        <Stack
-                          direction="row"
-                          spacing={1}
-                          sx={{
-                            alignItems: 'center',
-                            flexWrap: 'wrap',
-                            mb: 1,
-                          }}
-                        >
-                          <Chip
-                            size="small"
-                            label={finding.severity}
-                            color={
-                              finding.severity === 'BLOCK'
-                                ? 'error'
-                                : 'warning'
-                            }
-                            sx={{ fontWeight: 700 }}
-                          />
-
-                          <Typography
-                            variant="body2"
-                            sx={{ fontWeight: 700 }}
-                          >
-                            {finding.code}
-                          </Typography>
-
-                          {finding.resolution ? (
-                            <Chip
-                              size="small"
-                              label="Resolved"
-                              color="success"
-                              variant="outlined"
-                            />
-                          ) : (
-                            <Chip
-                              size="small"
-                              label="Open"
-                              variant="outlined"
-                            />
-                          )}
-                        </Stack>
-
-                        <Typography variant="body2" sx={{ mb: 1 }}>
-                          {finding.message}
-                        </Typography>
-
-                        <Typography
-                          variant="caption"
-                          color="text.secondary"
-                          sx={{ display: 'block', overflowWrap: 'anywhere' }}
-                        >
-                          Evidence: {evidenceText(finding.evidence)}
-                        </Typography>
-
-                        {finding.resolution && (
-                          <Typography
-                            variant="caption"
-                            color="text.secondary"
-                            sx={{ display: 'block', mt: 0.5 }}
-                          >
-                            Resolved by {finding.resolution.resolved_by_id} on{' '}
-                            {formatDateTime(finding.resolution.resolved_at)} —{' '}
-                            {finding.resolution.justification}
-                          </Typography>
-                        )}
-
-                        <Stack
-                          direction="row"
-                          spacing={1}
-                          sx={{ mt: 1.5, alignItems: 'center' }}
-                        >
-                          {finding.severity === 'BLOCK' ? (
-                            <Typography
-                              variant="caption"
-                              color="error.main"
-                            >
-                              Blocking findings cannot be overridden. Correct
-                              the invoice data and re-run analysis.
-                            </Typography>
-                          ) : (
-                            !finding.resolution &&
-                            canResolveFindings(
-                              user.role,
-                              invoice.status
-                            ) && (
-                              <Button
-                                size="small"
-                                variant="outlined"
-                                color="warning"
-                                onClick={() => openResolve(finding)}
-                              >
-                                Resolve warning
-                              </Button>
-                            )
-                          )}
-                        </Stack>
-                      </Box>
-                    ))
+                    <FindingList
+                      findings={invoice.findings}
+                      onResolve={
+                        canResolveFindings(user.role, invoice.status)
+                          ? openResolve
+                          : undefined
+                      }
+                    />
                   )}
                 </Stack>
               )}

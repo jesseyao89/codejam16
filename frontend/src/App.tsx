@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react'
 
 import Approvals from './Approvals'
-import AIReview from './AIReview'
+import ValidationReview from './ValidationReview'
 import Payments from './Payments'
 import Settings from './Settings'
 import Login from './Login'
@@ -64,7 +64,7 @@ import AddIcon from '@mui/icons-material/Add'
 import DashboardIcon from '@mui/icons-material/Dashboard'
 import ReceiptLongIcon from '@mui/icons-material/ReceiptLong'
 import FactCheckIcon from '@mui/icons-material/FactCheck'
-import SmartToyIcon from '@mui/icons-material/SmartToy'
+import RuleIcon from '@mui/icons-material/Rule'
 import PaymentsIcon from '@mui/icons-material/Payments'
 import SettingsIcon from '@mui/icons-material/Settings'
 import RefreshIcon from '@mui/icons-material/Refresh'
@@ -124,7 +124,7 @@ const menuItems: MenuItem[] = [
   { label: 'Dashboard', icon: <DashboardIcon /> },
   { label: 'Invoices', icon: <ReceiptLongIcon /> },
   { label: 'Approvals', icon: <FactCheckIcon /> },
-  { label: 'AI Review', icon: <SmartToyIcon /> },
+  { label: 'Validation Review', icon: <RuleIcon /> },
   {
     label: 'AP Inbox',
     icon: <InboxIcon />,
@@ -349,6 +349,7 @@ function App() {
 
   const [apiError, setApiError] = useState('')
   const [dataLoading, setDataLoading] = useState(false)
+  const [dataVersion, setDataVersion] = useState(0)
 
   // CHECK AUTHENTICATION
 
@@ -420,6 +421,7 @@ function App() {
 
       setApiInvoices(invoiceResponse.results)
       setDashboard(dashboardResponse)
+      setDataVersion((version) => version + 1)
     } catch (err) {
       setApiError(
         err instanceof Error
@@ -1031,7 +1033,14 @@ function App() {
           {currentPage === 'Approvals' && (
             <Approvals user={user} onDataChanged={refreshData} />
           )}
-          {currentPage === 'AI Review' && <AIReview />}
+          {currentPage === 'Validation Review' && (
+            <ValidationReview
+              refreshToken={dataVersion}
+              onOpenInvoice={(invoiceId) =>
+                setSelectedInvoiceId(invoiceId)
+              }
+            />
+          )}
           {currentPage === 'AP Inbox' && (
             <Inbox
               user={user}
