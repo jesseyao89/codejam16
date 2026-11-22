@@ -29,7 +29,11 @@ from apps.invoices.models import FXRate, GLAccount, Invoice, InvoiceLine
 from apps.invoices.services import (
     build_reference_data,
     extraction_tax_codes,
+    resolve_contract,
+    resolve_purchase_order,
+    resolve_references,
     resolve_vendor,
+    vendor_profile,
 )
 from apps.payments.models import Payment
 from apps.vendors.models import Contract, PurchaseOrder, Vendor
@@ -162,18 +166,26 @@ def dashboard_summary(user) -> dict:
 
 def to_invoice_data(invoice) -> dict:
     """Build the dict shape the automation ``analyze_invoice`` expects."""
+    from apps.invoices.tax import tax_lines_for_invoice
+
+    raw = invoice.raw_extraction if isinstance(invoice.raw_extraction, dict) else {}
     return {
+        "invoice_id": invoice.invoice_id,
         "vendor_id": invoice.vendor_id,
         "vendor_name": invoice.vendor.legal_name if invoice.vendor else None,
+        **vendor_profile(invoice.vendor),
         "invoice_number": invoice.vendor_invoice_number,
         "invoice_date": invoice.invoice_date.isoformat() if invoice.invoice_date else None,
         "currency": invoice.currency or None,
         "subtotal": str(invoice.subtotal) if invoice.subtotal is not None else None,
         "gst_hst": str(invoice.gst_hst_amount) if invoice.gst_hst_amount is not None else None,
         "pst_qst": str(invoice.pst_qst_amount) if invoice.pst_qst_amount is not None else None,
+        "tax_lines": tax_lines_for_invoice(invoice),
         "total": str(invoice.total) if invoice.total is not None else None,
         "po_id": invoice.po_id,
+        "po_reference": raw.get("po_number"),
         "contract_id": invoice.contract_id,
+        "contract_reference": raw.get("contract_reference"),
         "department_id": invoice.department_id,
         "ship_to_province": invoice.ship_to_province,
         "line_items": [
@@ -188,6 +200,7 @@ def to_invoice_data(invoice) -> dict:
                 ),
                 "amount": str(line.amount) if line.amount is not None else None,
                 "line_type": line.line_type,
+                "tax_code": line.gst_hst_code or line.pst_qst_code or None,
             }
             for line in invoice.lines.all()
         ],
@@ -205,6 +218,8 @@ def analysis_extraction(invoice) -> dict:
             "quantity": str(line.quantity) if line.quantity is not None else None,
             "unit_price": str(line.unit_price) if line.unit_price is not None else None,
             "amount": str(line.amount) if line.amount is not None else None,
+            "tax_code": line.gst_hst_code or line.pst_qst_code or None,
+            "line_type": line.line_type or None,
         }
         for line in invoice.lines.all()
     ]
@@ -315,6 +330,14 @@ def _populate_from_extraction(invoice, extracted: dict) -> None:
     invoice.pst_qst_amount = _to_decimal(extracted.get("pst_qst"))
     invoice.total = _to_decimal(extracted.get("total"))
     invoice.ship_to_province = (extracted.get("ship_to_province") or "")[:2].upper()
+    po_reference = extracted.get("po_id") or extracted.get("po_number")
+    if po_reference:
+        invoice.po = resolve_purchase_order(po_reference)
+    contract_reference = extracted.get("contract_id") or extracted.get(
+        "contract_reference"
+    )
+    if contract_reference:
+        invoice.contract = resolve_contract(contract_reference)
     invoice.raw_extraction = extracted
     _apply_fx(invoice)
     invoice.save()
@@ -339,6 +362,7 @@ def _populate_from_extraction(invoice, extracted: dict) -> None:
             pst_qst_code=(
                 tax_code if tax_code.startswith(("PST", "QST")) else ""
             ),
+            line_type=(item.get("line_type") or "")[:32].lower(),
         )
 
     tax_lines = extracted.get("tax_lines") or []
@@ -372,7 +396,9 @@ def create_invoice_from_extraction(
             status=Invoice.Status.DRAFT,
             requester=actor,
         )
-        _populate_from_extraction(invoice, resolve_vendor(extracted))
+        _populate_from_extraction(
+            invoice, resolve_references(resolve_vendor(extracted))
+        )
         run_analysis(invoice)
         record_audit(
             actor,

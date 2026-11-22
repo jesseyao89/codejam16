@@ -16,6 +16,7 @@ from decimal import Decimal, InvalidOperation
 
 # A near duplicate must fall within this many days of the candidate.
 NEAR_DATE_WINDOW_DAYS = 7
+CARD_DATE_WINDOW_DAYS = 90
 
 
 def _normalize_vendor(value) -> str:
@@ -154,6 +155,35 @@ def detect_duplicates(invoice_data: dict, historical_invoices: list) -> list:
                     evidence={
                         "matching_invoice_id": old_id,
                         "match_type": "NEAR",
+                        "matching_invoice_date": str(old_date),
+                        "days_apart": abs((invoice_date - old_date).days),
+                        **_payment_evidence(historical),
+                    },
+                )
+            )
+            continue
+
+        # A card-paid historical invoice with the same vendor + amount inside a
+        # wider window is still a likely repeat, even when the number differs.
+        if (
+            amounts_match
+            and currencies_match
+            and str(historical.get("payment_method") or "").upper() == "CARD"
+            and invoice_date is not None
+            and old_date is not None
+            and abs((invoice_date - old_date).days) <= CARD_DATE_WINDOW_DAYS
+        ):
+            findings.append(
+                _finding(
+                    code="CARD_INVOICE",
+                    severity="WARNING",
+                    message=(
+                        "This vendor and amount were already paid by card "
+                        "within the card duplicate window."
+                    ),
+                    evidence={
+                        "matching_invoice_id": old_id,
+                        "match_type": "CARD",
                         "matching_invoice_date": str(old_date),
                         "days_apart": abs((invoice_date - old_date).days),
                         **_payment_evidence(historical),
