@@ -47,6 +47,11 @@ INSTALLED_APPS = [
     "rest_framework",
     # Local
     "apps.accounts",
+    "apps.vendors",
+    "apps.invoices",
+    "apps.approvals",
+    "apps.payments",
+    "apps.audit",
 ]
 
 MIDDLEWARE = [
