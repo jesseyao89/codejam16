@@ -1073,8 +1073,10 @@ function App() {
 
           <InvoiceUpload
             open={uploadOpen}
-            onClose={() => {
+            onClose={() => setUploadOpen(false)}
+            onUploaded={(invoice) => {
               setUploadOpen(false)
+              setSelectedInvoiceId(invoice.id)
               void refreshData()
             }}
           />

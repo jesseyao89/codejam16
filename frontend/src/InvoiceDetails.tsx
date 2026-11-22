@@ -330,9 +330,15 @@ export default function InvoiceDetails({
   )
 
   const confidentLineNumbers = new Set(
-    lineSuggestions
-      .filter((suggestion) => Boolean(suggestion.suggested_gl_account))
-      .map((suggestion) => suggestion.line_no as number)
+    lines
+      .filter((line) =>
+        lineSuggestions.some(
+          (suggestion) =>
+            suggestion.line_no === line.line_no &&
+            Boolean(suggestion.suggested_gl_account)
+        )
+      )
+      .map((line) => line.line_no)
   )
 
   const manualReviewCount = lines.filter(
@@ -955,7 +961,8 @@ export default function InvoiceDetails({
                         sx={{ mb: 1.5 }}
                       >
                         {confidentLineNumbers.size} of {lines.length} line
-                        {lines.length === 1 ? '' : 's'} have a GL suggestion
+                        {lines.length === 1 ? '' : 's'}{' '}
+                        {lines.length === 1 ? 'has' : 'have'} a GL suggestion
                         {manualReviewCount > 0
                           ? `; ${manualReviewCount} need manual review.`
                           : '.'}
@@ -1038,6 +1045,20 @@ export default function InvoiceDetails({
                                         ? ` · ${line.line_type}`
                                         : ''}
                                     </Typography>
+
+                                    {(line.gst_hst_code ||
+                                      line.pst_qst_code) && (
+                                      <Typography
+                                        variant="caption"
+                                        color="text.secondary"
+                                        sx={{ display: 'block' }}
+                                      >
+                                        Tax:{' '}
+                                        {[line.gst_hst_code, line.pst_qst_code]
+                                          .filter(Boolean)
+                                          .join(' / ')}
+                                      </Typography>
+                                    )}
 
                                     {lineSuggestions.length > 0 && (
                                       <Box sx={{ mt: 0.5 }}>
