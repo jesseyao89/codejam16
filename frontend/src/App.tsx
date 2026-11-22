@@ -164,8 +164,8 @@ function formatDateTime(value: string | null | undefined): string {
   })
 }
 
-function formatStatus(status: string): string {
-  return status.replace(/_/g, ' ')
+function formatStatus(status: string | null | undefined): string {
+  return status?.replace(/_/g, ' ') ?? 'Unknown'
 }
 
 function getStatusColor(
