@@ -23,7 +23,7 @@ from apps.approvals.models import ApprovalStep
 from apps.audit.models import AuditEvent
 from apps.audit.services import record_audit
 from apps.invoices import findings as findings_mod
-from apps.invoices.models import GLAccount, Invoice, InvoiceLine
+from apps.invoices.models import FXRate, GLAccount, Invoice, InvoiceLine
 from apps.invoices.services import build_reference_data, resolve_vendor
 from apps.payments.models import Payment
 from apps.vendors.models import Contract, PurchaseOrder, Vendor
@@ -213,6 +213,22 @@ def run_analysis(invoice) -> dict:
 # --- Upload -----------------------------------------------------------------
 
 
+def _apply_fx(invoice) -> None:
+    """Set the CAD amount and rate for a new invoice (AGENTS.md §8)."""
+    if invoice.total is None:
+        return
+    if invoice.currency == "CAD":
+        invoice.total_cad = invoice.total
+        invoice.fx_rate_to_cad = Decimal("1.0")
+    elif invoice.currency == "USD" and invoice.invoice_date is not None:
+        rate = FXRate.objects.filter(date=invoice.invoice_date).first()
+        if rate is not None:
+            invoice.fx_rate_to_cad = rate.usd_to_cad
+            invoice.total_cad = (invoice.total * rate.usd_to_cad).quantize(
+                Decimal("0.01")
+            )
+
+
 def _populate_from_extraction(invoice, extracted: dict) -> None:
     vendor_id = extracted.get("vendor_id")
     invoice.vendor = (
@@ -228,6 +244,7 @@ def _populate_from_extraction(invoice, extracted: dict) -> None:
     invoice.total = _to_decimal(extracted.get("total"))
     invoice.ship_to_province = (extracted.get("ship_to_province") or "")[:2].upper()
     invoice.raw_extraction = extracted
+    _apply_fx(invoice)
     invoice.save()
 
     for index, item in enumerate(extracted.get("line_items") or [], start=1):

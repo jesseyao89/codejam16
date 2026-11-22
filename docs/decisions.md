@@ -81,6 +81,35 @@ Answers to the frontend team's integration questions; encoded in
   `resolution` object; `resolve-finding` targets `finding_id`; `validation_status`
   counts open findings only; a `BLOCK` is never resolvable.
 
+## Frontend API-mismatch fixes (Nov 2026)
+
+The frontend surfaced six read-API mismatches. Resolutions:
+
+1. **Payment status normalization.** The serializer maps historical dataset
+   values: `settled → PAID`, `scheduled → SCHEDULED`, `outstanding → SCHEDULED`;
+   new rows already use canonical values.
+2. **`Invoice.validation_status`.** Historical rows (never analyzed) serialize
+   the empty string as `null`.
+3. **`Approval.comment`.** An undecided step's empty comment serializes as
+   `null`.
+4. **Approvals `mine` / `actionable`.** `mine=true` means assigned-to-me
+   regardless of status; the new `actionable=true` returns assigned-to-me,
+   `status=PENDING`, on a `PENDING_APPROVAL` invoice.
+5. **FX / `total_cad` on upload.** CAD invoices now set `total_cad = total` and
+   `fx_rate_to_cad = 1.0`; USD invoices use the invoice-date `FXRate` when
+   available (otherwise the values stay null).
+6. **Release on a paid invoice.** `release` now refuses
+   (`409 INVALID_STATE_TRANSITION`) when the linked invoice is already `PAID`,
+   covering historical `scheduled` payments.
+
+Contract deltas still to apply to `docs/API_CONTRACT.md` (blocked by the backend
+agent's edit permissions):
+
+- §7 approvals filter list: add `actionable`, and document `mine` (all statuses)
+  vs `actionable` (pending and actionable now).
+- §8 payments: add that release is refused when the invoice is already `PAID`.
+- §13: add the payment/invoice/comment normalization mappings above.
+
 ## Known limitations / next steps
 
 - Extraction is **text-PDF only** (no OCR, no proven French/scan support) and

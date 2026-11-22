@@ -113,6 +113,7 @@ class ApprovalStepSerializer(serializers.ModelSerializer):
     approver = serializers.SerializerMethodField()
     delegated_for_id = serializers.SerializerMethodField()
     reason = serializers.SerializerMethodField()
+    comment = serializers.SerializerMethodField()
 
     class Meta:
         model = ApprovalStep
@@ -152,6 +153,9 @@ class ApprovalStepSerializer(serializers.ModelSerializer):
             return "Above limit or requires finance review"
         return "Department manager"
 
+    def get_comment(self, obj):
+        return obj.comment or None
+
 
 class InvoiceSerializer(serializers.ModelSerializer):
     id = serializers.CharField(source="invoice_id")
@@ -165,6 +169,7 @@ class InvoiceSerializer(serializers.ModelSerializer):
     fx_rate_date = serializers.SerializerMethodField()
     lines = InvoiceLineSerializer(many=True, read_only=True)
     findings = serializers.SerializerMethodField()
+    validation_status = serializers.SerializerMethodField()
     coding_suggestions = serializers.JSONField()
     approvals = serializers.SerializerMethodField()
     created_at = UTCDateTimeField(read_only=True)
@@ -221,6 +226,10 @@ class InvoiceSerializer(serializers.ModelSerializer):
 
     def get_findings(self, obj):
         return findings_mod.attach_finding_ids(obj.findings or [])
+
+    def get_validation_status(self, obj):
+        # Historical rows were never analyzed; report null, not "".
+        return obj.validation_status or None
 
     def get_approvals(self, obj):
         return ApprovalStepSerializer(obj.approval_steps.all(), many=True).data

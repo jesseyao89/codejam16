@@ -220,3 +220,24 @@ def test_resubmit_clears_pending_but_keeps_history(requester, approver, finance,
     new_steps = ApprovalStep.objects.filter(invoice=invoice, action="")
     assert new_steps.exists()
     assert all(step.step_no > rejected.step_no for step in new_steps)
+
+
+def test_pending_approval_comment_is_null(requester, approver, department):
+    invoice = _invoice(requester=requester, department=department)
+    _step(invoice, 1, approver)
+
+    response = _client(approver).get("/api/approvals/?mine=true")
+
+    assert response.data["results"][0]["comment"] is None
+
+
+def test_actionable_filter_returns_only_actionable_steps(
+    requester, approver, finance, department
+):
+    invoice = _invoice(requester=requester, department=department)
+    pending = _step(invoice, 1, approver)
+    _step(invoice, 2, finance, "FINANCE_MANAGER", action="approved")
+
+    response = _client(approver).get("/api/approvals/?actionable=true")
+
+    assert [row["id"] for row in response.data["results"]] == [pending.approval_id]

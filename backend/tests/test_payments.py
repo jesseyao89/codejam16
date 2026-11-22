@@ -214,3 +214,44 @@ def test_payment_list_scoped_to_visible_invoices(controller, clerk, finance, inv
     assert response.status_code == 200
     assert response.data["count"] == 1
     assert response.data["results"][0]["invoice_id"] == invoice.invoice_id
+
+
+def test_payment_status_normalized_for_historical_rows(controller, invoice):
+    for payment_id, status in (
+        ("PAY-LEGACY-1", "settled"),
+        ("PAY-LEGACY-2", "scheduled"),
+        ("PAY-LEGACY-3", "outstanding"),
+    ):
+        Payment.objects.create(
+            payment_id=payment_id,
+            invoice=invoice,
+            status=status,
+            amount="105.00",
+            currency="CAD",
+            amount_cad="105.00",
+        )
+
+    response = _client(controller).get("/api/payments/")
+
+    statuses = {row["id"]: row["status"] for row in response.data["results"]}
+    assert statuses["PAY-LEGACY-1"] == "PAID"
+    assert statuses["PAY-LEGACY-2"] == "SCHEDULED"
+    assert statuses["PAY-LEGACY-3"] == "SCHEDULED"
+
+
+def test_release_refuses_when_invoice_already_paid(finance, invoice):
+    invoice.status = Invoice.Status.PAID
+    invoice.save(update_fields=["status"])
+    payment = Payment.objects.create(
+        payment_id="PAY-HIST",
+        invoice=invoice,
+        status="scheduled",
+        amount="105.00",
+        currency="CAD",
+        amount_cad="105.00",
+    )
+
+    response = _client(finance).post(f"/api/payments/{payment.payment_id}/release/")
+
+    assert response.status_code == 409
+    assert response.data["error"]["code"] == "INVALID_STATE_TRANSITION"

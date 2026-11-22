@@ -5,9 +5,17 @@ from rest_framework import serializers
 from apps.invoices.serializers import UTCDateTimeField
 from apps.payments.models import Payment
 
+# Historical dataset statuses -> canonical contract statuses (contract §1.3/§13).
+_HISTORICAL_STATUS = {
+    "settled": "PAID",
+    "scheduled": "SCHEDULED",
+    "outstanding": "SCHEDULED",
+}
+
 
 class PaymentSerializer(serializers.ModelSerializer):
     id = serializers.CharField(source="payment_id")
+    status = serializers.SerializerMethodField()
     invoice_id = serializers.SerializerMethodField()
     bank_account_masked = serializers.SerializerMethodField()
     prepared_by_id = serializers.SerializerMethodField()
@@ -36,6 +44,9 @@ class PaymentSerializer(serializers.ModelSerializer):
             "failure_reason",
             "created_at",
         ]
+
+    def get_status(self, obj):
+        return _HISTORICAL_STATUS.get(obj.status, obj.status)
 
     def get_invoice_id(self, obj):
         return obj.invoice.invoice_id if obj.invoice else None

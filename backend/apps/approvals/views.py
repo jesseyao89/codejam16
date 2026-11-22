@@ -28,12 +28,17 @@ class ApprovalListView(generics.ListAPIView):
             queryset = queryset.filter(
                 action=_STATUS_TO_ACTION.get(params["status"], params["status"])
             )
-        if params.get("mine") in _TRUTHY:
-            user = self.request.user
+        user = self.request.user
+        assigned_to_user = (
+            Q(approver=user)
+            | Q(approver__delegate=user, approver__status="on_leave")
+            | Q(approver__isnull=True, approver_role=user.role)
+        )
+        if params.get("mine") in _TRUTHY or params.get("actionable") in _TRUTHY:
+            queryset = queryset.filter(assigned_to_user)
+        if params.get("actionable") in _TRUTHY:
             queryset = queryset.filter(
-                Q(approver=user)
-                | Q(approver__delegate=user, approver__status="on_leave")
-                | Q(approver__isnull=True, approver_role=user.role)
+                action="", invoice__status="PENDING_APPROVAL"
             )
 
         return queryset.select_related("approver", "invoice", "delegated_for").order_by(

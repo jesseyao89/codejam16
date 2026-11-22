@@ -114,6 +114,8 @@ def release_payment(payment, actor) -> Payment:
             raise InvalidStateTransition("This payment cannot be released.")
 
         invoice = locked.invoice
+        if invoice and invoice.status == Invoice.Status.PAID:
+            raise InvalidStateTransition("The invoice is already paid.")
         if (
             invoice
             and ApprovalStep.objects.filter(

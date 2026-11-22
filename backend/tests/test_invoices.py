@@ -394,3 +394,33 @@ def test_dashboard_shows_pending_approvals_for_approver(db):
     assert response.data["counts"]["pending_my_approval"] == 1
     assert len(response.data["pending_approvals"]) == 1
     assert response.data["pending_approvals"][0]["status"] == "PENDING"
+
+
+# --- Contract normalization -------------------------------------------------
+
+
+@pytest.mark.django_db
+def test_historical_invoice_validation_status_is_null(client):
+    invoice = Invoice.objects.create(
+        invoice_id="AP-00001", status="PAID", validation_status=""
+    )
+
+    response = client.get(f"/api/invoices/{invoice.invoice_id}/")
+
+    assert response.status_code == 200
+    assert response.data["validation_status"] is None
+
+
+@pytest.mark.django_db
+def test_upload_cad_sets_total_cad_and_fx(client, vendor, settings, tmp_path):
+    settings.MEDIA_ROOT = tmp_path
+    upload = SimpleUploadedFile("inv.pdf", b"%PDF-1.4 fake")
+
+    with mock.patch("apps.invoices.actions.extract_invoice", return_value=EXTRACTED):
+        response = client.post(
+            "/api/invoices/upload/", {"file": upload}, format="multipart"
+        )
+
+    assert response.status_code == 201
+    assert response.data["total_cad"] == "105.00"
+    assert response.data["fx_rate_to_cad"] == "1.000000"
