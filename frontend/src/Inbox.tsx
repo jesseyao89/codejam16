@@ -679,28 +679,33 @@ export default function Inbox({
               )
             ) : (
               <TableContainer>
-              <Table size="small">
+              <Table size="small" sx={{ tableLayout: 'fixed', minWidth: 960 }}>
                 <TableHead sx={{ backgroundColor: '#E9EDF5' }}>
                   <TableRow>
-                    <TableCell>Received</TableCell>
-                    <TableCell>From</TableCell>
-                    <TableCell>Subject</TableCell>
-                    <TableCell>Classification</TableCell>
-                    <TableCell>Status</TableCell>
-                    <TableCell>Attachments</TableCell>
-                    <TableCell>Invoices</TableCell>
-                    <TableCell align="right">Actions</TableCell>
+                    <TableCell sx={{ width: '8%' }}>Received</TableCell>
+                    <TableCell sx={{ width: '9%' }}>From</TableCell>
+                    <TableCell sx={{ width: '23%' }}>Subject</TableCell>
+                    <TableCell sx={{ width: '12%' }}>
+                      Classification
+                    </TableCell>
+                    <TableCell sx={{ width: '10%' }}>Status</TableCell>
+                    <TableCell sx={{ width: '24%' }}>
+                      Files / Invoices
+                    </TableCell>
+                    <TableCell align="right" sx={{ width: '14%' }}>
+                      Actions
+                    </TableCell>
                   </TableRow>
                 </TableHead>
 
                 <TableBody>
                   {emails.map((email) => (
                     <TableRow key={email.id} hover>
-                      <TableCell sx={{ whiteSpace: 'nowrap' }}>
+                      <TableCell sx={{ whiteSpace: 'normal' }}>
                         {formatDateTime(email.received_at)}
                       </TableCell>
 
-                      <TableCell>
+                      <TableCell sx={{ overflowWrap: 'anywhere' }}>
                         <Typography variant="body2">
                           {email.from_name || email.sender || '—'}
                         </Typography>
@@ -713,7 +718,12 @@ export default function Inbox({
                         </Typography>
                       </TableCell>
 
-                      <TableCell sx={{ maxWidth: 280 }}>
+                      <TableCell
+                        sx={{
+                          overflowWrap: 'anywhere',
+                          wordBreak: 'break-word',
+                        }}
+                      >
                         <Typography
                           variant="body2"
                           sx={{ overflowWrap: 'anywhere' }}
@@ -750,7 +760,7 @@ export default function Inbox({
                       </TableCell>
 
                       <TableCell>
-                        <Stack spacing={0.5}>
+                        <Stack spacing={0.75}>
                           {email.attachments.length === 0 ? (
                             <Typography
                               variant="caption"
@@ -764,7 +774,11 @@ export default function Inbox({
                                 key={`${attachment.filename}-${attachment.order}`}
                                 direction="row"
                                 spacing={0.5}
-                                sx={{ alignItems: 'center' }}
+                                sx={{
+                                  alignItems: 'center',
+                                  flexWrap: 'wrap',
+                                  rowGap: 0.5,
+                                }}
                               >
                                 <AttachFileIcon
                                   sx={{ fontSize: 14, color: '#667085' }}
@@ -772,7 +786,12 @@ export default function Inbox({
 
                                 <Typography
                                   variant="caption"
-                                  sx={{ overflowWrap: 'anywhere' }}
+                                  sx={{
+                                    flex: 1,
+                                    minWidth: 0,
+                                    overflowWrap: 'anywhere',
+                                    wordBreak: 'break-word',
+                                  }}
                                 >
                                   {attachment.filename}
                                 </Typography>
@@ -788,34 +807,39 @@ export default function Inbox({
                               </Stack>
                             ))
                           )}
-                        </Stack>
-                      </TableCell>
 
-                      <TableCell>
-                        <Stack spacing={0.5}>
-                          {email.invoice_ids.length === 0 ? (
-                            <Typography
-                              variant="caption"
-                              color="text.secondary"
-                            >
-                              —
-                            </Typography>
-                          ) : (
-                            email.invoice_ids.map((invoiceId) => (
-                              <Button
-                                key={invoiceId}
-                                size="small"
-                                sx={{
-                                  textTransform: 'none',
-                                  p: 0,
-                                  minWidth: 0,
-                                  justifyContent: 'flex-start',
-                                }}
-                                onClick={() => openInvoice(invoiceId)}
+                          {email.invoice_ids.length > 0 && (
+                            <Box>
+                              <Typography
+                                variant="caption"
+                                color="text.secondary"
+                                sx={{ display: 'block' }}
                               >
-                                {invoiceId}
-                              </Button>
-                            ))
+                                Invoices
+                              </Typography>
+
+                              <Stack
+                                direction="row"
+                                spacing={0.5}
+                                sx={{ flexWrap: 'wrap', rowGap: 0.5 }}
+                              >
+                                {email.invoice_ids.map((invoiceId) => (
+                                  <Button
+                                    key={invoiceId}
+                                    size="small"
+                                    sx={{
+                                      textTransform: 'none',
+                                      p: 0,
+                                      minWidth: 0,
+                                      justifyContent: 'flex-start',
+                                    }}
+                                    onClick={() => openInvoice(invoiceId)}
+                                  >
+                                    {invoiceId}
+                                  </Button>
+                                ))}
+                              </Stack>
+                            </Box>
                           )}
                         </Stack>
                       </TableCell>
@@ -824,7 +848,11 @@ export default function Inbox({
                         <Stack
                           direction="row"
                           spacing={0.5}
-                          sx={{ justifyContent: 'flex-end' }}
+                          sx={{
+                            justifyContent: 'flex-end',
+                            flexWrap: 'wrap',
+                            rowGap: 0.5,
+                          }}
                         >
                           <Button
                             size="small"

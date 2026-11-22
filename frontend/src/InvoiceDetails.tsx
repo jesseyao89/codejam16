@@ -989,254 +989,291 @@ export default function InvoiceDetails({
                         and run analysis again.
                       </Typography>
                     ) : (
-                      <TableContainer
-                        sx={{ border: '1px solid #E5E7EB', borderRadius: 1 }}
-                      >
-                        <Table size="small">
-                          <TableHead>
-                            <TableRow sx={{ backgroundColor: '#EEF1F7' }}>
-                              <TableCell sx={{ fontWeight: 700 }}>
-                                Description
-                              </TableCell>
-                              <TableCell sx={{ fontWeight: 700 }}>
-                                Qty
-                              </TableCell>
-                              <TableCell sx={{ fontWeight: 700 }}>
-                                Unit price
-                              </TableCell>
-                              <TableCell sx={{ fontWeight: 700 }}>
-                                Amount
-                              </TableCell>
-                              <TableCell sx={{ fontWeight: 700 }}>
-                                GL account
-                              </TableCell>
-                              <TableCell sx={{ fontWeight: 700 }}>
-                                Department
-                              </TableCell>
-                            </TableRow>
-                          </TableHead>
+                      <Stack spacing={1.5}>
+                        {lines.map((line) => {
+                          const edit = lineEdits[line.line_no] ?? {
+                            gl_account: line.gl_account ?? '',
+                            department_id: line.department_id ?? '',
+                          }
 
-                          <TableBody>
-                            {lines.map((line) => {
-                              const edit = lineEdits[line.line_no] ?? {
-                                gl_account: line.gl_account ?? '',
-                                department_id: line.department_id ?? '',
-                              }
+                          const suggestion = lineSuggestions.find(
+                            (item) => item.line_no === line.line_no
+                          )
 
-                              const suggestion = lineSuggestions.find(
-                                (item) => item.line_no === line.line_no
-                              )
+                          return (
+                            <Box
+                              key={line.line_no}
+                              sx={{
+                                border: '1px solid #E5E7EB',
+                                borderRadius: 1,
+                                p: 1.5,
+                              }}
+                            >
+                              <Stack
+                                direction={{ xs: 'column', sm: 'row' }}
+                                spacing={1.5}
+                                sx={{
+                                  justifyContent: 'space-between',
+                                  alignItems: {
+                                    xs: 'flex-start',
+                                    sm: 'flex-start',
+                                  },
+                                }}
+                              >
+                                <Box sx={{ flex: 1, minWidth: 0 }}>
+                                  <Typography
+                                    variant="body2"
+                                    sx={{
+                                      fontWeight: 600,
+                                      overflowWrap: 'anywhere',
+                                    }}
+                                  >
+                                    {line.description || 'Untitled line'}
+                                  </Typography>
 
-                              return (
-                                <TableRow key={line.line_no} hover>
-                                  <TableCell sx={{ minWidth: 220 }}>
+                                  <Typography
+                                    variant="caption"
+                                    color="text.secondary"
+                                    sx={{ display: 'block' }}
+                                  >
+                                    Line {line.line_no}
+                                    {line.line_type
+                                      ? ` · ${line.line_type}`
+                                      : ''}
+                                  </Typography>
+
+                                  {(line.gst_hst_code ||
+                                    line.pst_qst_code) && (
                                     <Typography
-                                      variant="body2"
-                                      sx={{ fontWeight: 600 }}
+                                      variant="caption"
+                                      color="text.secondary"
+                                      sx={{ display: 'block' }}
                                     >
-                                      {line.description}
+                                      Tax:{' '}
+                                      {[line.gst_hst_code, line.pst_qst_code]
+                                        .filter(Boolean)
+                                        .join(' / ')}
                                     </Typography>
+                                  )}
+                                </Box>
 
+                                <Stack
+                                  direction="row"
+                                  spacing={2}
+                                  sx={{ flexShrink: 0 }}
+                                >
+                                  <Box sx={{ textAlign: 'right' }}>
                                     <Typography
                                       variant="caption"
                                       color="text.secondary"
                                     >
-                                      Line {line.line_no}
-                                      {line.line_type
-                                        ? ` · ${line.line_type}`
-                                        : ''}
+                                      Qty
                                     </Typography>
 
-                                    {(line.gst_hst_code ||
-                                      line.pst_qst_code) && (
-                                      <Typography
-                                        variant="caption"
-                                        color="text.secondary"
-                                        sx={{ display: 'block' }}
-                                      >
-                                        Tax:{' '}
-                                        {[line.gst_hst_code, line.pst_qst_code]
-                                          .filter(Boolean)
-                                          .join(' / ')}
-                                      </Typography>
-                                    )}
+                                    <Typography variant="body2">
+                                      {line.quantity ?? '—'}
+                                    </Typography>
+                                  </Box>
 
-                                    {lineSuggestions.length > 0 && (
-                                      <Box sx={{ mt: 0.5 }}>
-                                        {suggestion ? (
-                                          <>
-                                            {suggestion.suggested_gl_account ? (
-                                              <Typography
-                                                variant="caption"
-                                                sx={{
-                                                  display: 'block',
-                                                  color: '#404D73',
-                                                  fontWeight: 600,
-                                                }}
-                                              >
-                                                Suggested{' '}
-                                                {
-                                                  suggestion.suggested_gl_account
-                                                }
-                                                {suggestion.suggested_department_id
-                                                  ? ` / ${suggestion.suggested_department_id}`
-                                                  : ''}
-                                                {suggestion.confidence
-                                                  ? ` · confidence ${suggestion.confidence}`
-                                                  : ''}
-                                              </Typography>
-                                            ) : (
-                                              <Typography
-                                                variant="caption"
-                                                sx={{
-                                                  display: 'block',
-                                                  color: '#B86B00',
-                                                  fontWeight: 600,
-                                                }}
-                                              >
-                                                No confident GL suggestion
-                                                {suggestion.suggested_department_id
-                                                  ? ` (department ${suggestion.suggested_department_id})`
-                                                  : ''}{' '}
-                                                — review this line manually.
-                                              </Typography>
-                                            )}
-
-                                            {suggestion.reason && (
-                                              <Typography
-                                                variant="caption"
-                                                color="text.secondary"
-                                                sx={{ display: 'block' }}
-                                              >
-                                                {suggestion.reason}
-                                              </Typography>
-                                            )}
-
-                                            {editable &&
-                                              (suggestion.suggested_gl_account ||
-                                                suggestion.suggested_department_id) && (
-                                                <Button
-                                                  size="small"
-                                                  onClick={() =>
-                                                    applyLineSuggestion(
-                                                      line.line_no,
-                                                      suggestion
-                                                    )
-                                                  }
-                                                >
-                                                  {suggestion.suggested_gl_account
-                                                    ? 'Apply suggestion'
-                                                    : 'Apply department'}
-                                                </Button>
-                                              )}
-                                          </>
-                                        ) : (
-                                          <Typography
-                                            variant="caption"
-                                            color="text.secondary"
-                                            sx={{ display: 'block' }}
-                                          >
-                                            No suggestion for this line; choose
-                                            a GL account manually.
-                                          </Typography>
-                                        )}
-                                      </Box>
-                                    )}
-                                  </TableCell>
-
-                                  <TableCell>{line.quantity}</TableCell>
-
-                                  <TableCell>{line.unit_price}</TableCell>
-
-                                  <TableCell sx={{ fontWeight: 600 }}>
-                                    {line.amount}
-                                  </TableCell>
-
-                                  <TableCell>
-                                    <TextField
-                                      select
-                                      size="small"
-                                      value={edit.gl_account}
-                                      disabled={!editable || refLoading}
-                                      onChange={(event) =>
-                                        updateLineEdit(line.line_no, {
-                                          gl_account: event.target.value,
-                                        })
-                                      }
-                                      sx={{ minWidth: 190 }}
+                                  <Box sx={{ textAlign: 'right' }}>
+                                    <Typography
+                                      variant="caption"
+                                      color="text.secondary"
                                     >
-                                      <MenuItem value="">Uncoded</MenuItem>
+                                      Unit price
+                                    </Typography>
 
-                                      {edit.gl_account &&
-                                        !glAccounts.some(
-                                          (account) =>
-                                            account.account_number ===
-                                            edit.gl_account
-                                        ) && (
-                                          <MenuItem value={edit.gl_account}>
-                                            {edit.gl_account} (unknown)
-                                          </MenuItem>
-                                        )}
+                                    <Typography variant="body2">
+                                      {line.unit_price ?? '—'}
+                                    </Typography>
+                                  </Box>
 
-                                      {glAccounts.map((account) => (
-                                        <MenuItem
-                                          key={account.account_number}
-                                          value={account.account_number}
-                                        >
-                                          {account.account_number} ·{' '}
-                                          {account.name}
-                                        </MenuItem>
-                                      ))}
-                                    </TextField>
-                                  </TableCell>
-
-                                  <TableCell>
-                                    <TextField
-                                      select
-                                      size="small"
-                                      value={edit.department_id}
-                                      disabled={!editable || refLoading}
-                                      onChange={(event) =>
-                                        updateLineEdit(line.line_no, {
-                                          department_id:
-                                            event.target.value,
-                                        })
-                                      }
-                                      sx={{ minWidth: 160 }}
+                                  <Box sx={{ textAlign: 'right' }}>
+                                    <Typography
+                                      variant="caption"
+                                      color="text.secondary"
                                     >
-                                      <MenuItem value="">
-                                        Unassigned
+                                      Amount
+                                    </Typography>
+
+                                    <Typography
+                                      variant="body2"
+                                      sx={{ fontWeight: 700 }}
+                                    >
+                                      {line.amount ?? '—'}
+                                    </Typography>
+                                  </Box>
+                                </Stack>
+                              </Stack>
+
+                              <Stack
+                                direction={{ xs: 'column', sm: 'row' }}
+                                spacing={1.5}
+                                sx={{ mt: 1.5 }}
+                              >
+                                <TextField
+                                  select
+                                  fullWidth
+                                  size="small"
+                                  label="GL account"
+                                  value={edit.gl_account}
+                                  disabled={!editable || refLoading}
+                                  onChange={(event) =>
+                                    updateLineEdit(line.line_no, {
+                                      gl_account: event.target.value,
+                                    })
+                                  }
+                                >
+                                  <MenuItem value="">Uncoded</MenuItem>
+
+                                  {edit.gl_account &&
+                                    !glAccounts.some(
+                                      (account) =>
+                                        account.account_number ===
+                                        edit.gl_account
+                                    ) && (
+                                      <MenuItem value={edit.gl_account}>
+                                        {edit.gl_account} (unknown)
                                       </MenuItem>
+                                    )}
 
-                                      {edit.department_id &&
-                                        !departments.some(
-                                          (department) =>
-                                            department.id ===
-                                            edit.department_id
-                                        ) && (
-                                          <MenuItem
-                                            value={edit.department_id}
-                                          >
-                                            {edit.department_id} (unknown)
-                                          </MenuItem>
-                                        )}
+                                  {glAccounts.map((account) => (
+                                    <MenuItem
+                                      key={account.account_number}
+                                      value={account.account_number}
+                                    >
+                                      {account.account_number} ·{' '}
+                                      {account.name}
+                                    </MenuItem>
+                                  ))}
+                                </TextField>
 
-                                      {departments.map((department) => (
-                                        <MenuItem
-                                          key={department.id}
-                                          value={department.id}
+                                <TextField
+                                  select
+                                  fullWidth
+                                  size="small"
+                                  label="Department"
+                                  value={edit.department_id}
+                                  disabled={!editable || refLoading}
+                                  onChange={(event) =>
+                                    updateLineEdit(line.line_no, {
+                                      department_id: event.target.value,
+                                    })
+                                  }
+                                >
+                                  <MenuItem value="">Unassigned</MenuItem>
+
+                                  {edit.department_id &&
+                                    !departments.some(
+                                      (department) =>
+                                        department.id ===
+                                        edit.department_id
+                                    ) && (
+                                      <MenuItem value={edit.department_id}>
+                                        {edit.department_id} (unknown)
+                                      </MenuItem>
+                                    )}
+
+                                  {departments.map((department) => (
+                                    <MenuItem
+                                      key={department.id}
+                                      value={department.id}
+                                    >
+                                      {department.id} · {department.name}
+                                    </MenuItem>
+                                  ))}
+                                </TextField>
+                              </Stack>
+
+                              {lineSuggestions.length > 0 && (
+                                <Box
+                                  sx={{
+                                    mt: 1.5,
+                                    p: 1,
+                                    backgroundColor: '#F8F9FC',
+                                    borderRadius: 1,
+                                  }}
+                                >
+                                  {suggestion ? (
+                                    <>
+                                      {suggestion.suggested_gl_account ? (
+                                        <Typography
+                                          variant="caption"
+                                          sx={{
+                                            display: 'block',
+                                            color: '#404D73',
+                                            fontWeight: 600,
+                                          }}
                                         >
-                                          {department.id} · {department.name}
-                                        </MenuItem>
-                                      ))}
-                                    </TextField>
-                                  </TableCell>
-                                </TableRow>
-                              )
-                            })}
-                          </TableBody>
-                        </Table>
-                      </TableContainer>
+                                          Suggested{' '}
+                                          {suggestion.suggested_gl_account}
+                                          {suggestion.suggested_department_id
+                                            ? ` / ${suggestion.suggested_department_id}`
+                                            : ''}
+                                          {suggestion.confidence
+                                            ? ` · confidence ${suggestion.confidence}`
+                                            : ''}
+                                        </Typography>
+                                      ) : (
+                                        <Typography
+                                          variant="caption"
+                                          sx={{
+                                            display: 'block',
+                                            color: '#B86B00',
+                                            fontWeight: 600,
+                                          }}
+                                        >
+                                          No confident GL suggestion
+                                          {suggestion.suggested_department_id
+                                            ? ` (department ${suggestion.suggested_department_id})`
+                                            : ''}{' '}
+                                          — review this line manually.
+                                        </Typography>
+                                      )}
+
+                                      {suggestion.reason && (
+                                        <Typography
+                                          variant="caption"
+                                          color="text.secondary"
+                                          sx={{ display: 'block' }}
+                                        >
+                                          {suggestion.reason}
+                                        </Typography>
+                                      )}
+
+                                      {editable &&
+                                        (suggestion.suggested_gl_account ||
+                                          suggestion.suggested_department_id) && (
+                                          <Button
+                                            size="small"
+                                            onClick={() =>
+                                              applyLineSuggestion(
+                                                line.line_no,
+                                                suggestion
+                                              )
+                                            }
+                                          >
+                                            {suggestion.suggested_gl_account
+                                              ? 'Apply suggestion'
+                                              : 'Apply department'}
+                                          </Button>
+                                        )}
+                                    </>
+                                  ) : (
+                                    <Typography
+                                      variant="caption"
+                                      color="text.secondary"
+                                    >
+                                      No suggestion for this line; choose a GL
+                                      account manually.
+                                    </Typography>
+                                  )}
+                                </Box>
+                              )}
+                            </Box>
+                          )
+                        })}
+                      </Stack>
                     )}
                   </Box>
 
