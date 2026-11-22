@@ -15,6 +15,7 @@ def authenticated_client(db):
         username="picker-user",
         user_id="U-PICKER",
         password="demo1234",
+        role=User.Role.AP_CLERK,
     )
     client = APIClient()
     client.force_authenticate(user=user)
@@ -141,6 +142,7 @@ def test_bank_changes_are_nested_with_contract_shape_and_unavailable_state_null(
         "verified_by_callback",
         "old_account_last4",
         "new_account_last4",
+        "note",
         "decided_by_id",
         "decided_at",
     }

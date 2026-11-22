@@ -63,6 +63,7 @@ def build_reference_data() -> dict:
             changed_at=bc.changed_at.isoformat() if bc.changed_at else None,
             request_channel=bc.request_channel,
             verified_by_callback=bc.verified_by_callback,
+            status=bc.status,
         )
         for bc in BankChange.objects.all()
     ]

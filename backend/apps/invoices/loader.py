@@ -9,6 +9,7 @@ than aborting the load, so a bad row never crashes the whole import
 from __future__ import annotations
 
 import csv
+import logging
 from datetime import date, datetime, timezone
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -85,6 +86,23 @@ ROLE_MAP = {
     "controller_admin": User.Role.CONTROLLER,
     "auditor": User.Role.AUDITOR,
 }
+
+VENDOR_STATUS_MAP = {
+    "active": Vendor.Status.ACTIVE,
+    "approved": Vendor.Status.ACTIVE,
+    "verified": Vendor.Status.ACTIVE,
+    "on_hold": Vendor.Status.ON_HOLD,
+    "on hold": Vendor.Status.ON_HOLD,
+    "suspended": Vendor.Status.ON_HOLD,
+    "blocked": Vendor.Status.ON_HOLD,
+    "inactive": Vendor.Status.ON_HOLD,
+    "pending_review": Vendor.Status.PENDING_REVIEW,
+    "pending review": Vendor.Status.PENDING_REVIEW,
+    "pending": Vendor.Status.PENDING_REVIEW,
+    "pending_approval": Vendor.Status.PENDING_REVIEW,
+}
+
+logger = logging.getLogger(__name__)
 
 
 class Loader:
@@ -200,6 +218,14 @@ class Loader:
             dep.manager = self.fk(self.users, row.get("manager_user_id"))
             dep.save(update_fields=["manager"])
 
+    def _vendor_status(self, value) -> str:
+        raw = _string(value, "pending_review").strip().lower().replace("-", "_")
+        mapped = VENDOR_STATUS_MAP.get(raw)
+        if mapped is None:
+            logger.warning("Unknown vendor status %r; defaulting to pending_review", value)
+            return Vendor.Status.PENDING_REVIEW
+        return mapped
+
     def load_vendors(self):
         def fn(row):
             vendor = Vendor.objects.update_or_create(
@@ -227,7 +253,7 @@ class Loader:
                     ),
                     "ap_contact_email": _string(row.get("ap_contact_email")),
                     "requires_po": _string(row.get("requires_po")),
-                    "status": _string(row.get("status"), "pending_review"),
+                    "status": self._vendor_status(row.get("status")),
                     "onboarded_at": _date(row.get("onboarded_at")),
                 },
             )[0]

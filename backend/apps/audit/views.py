@@ -35,7 +35,7 @@ _CSV_COLUMNS = [
 
 class AuditEventListView(generics.ListAPIView):
     serializer_class = AuditEventSerializer
-    permission_classes = [role_required(*_AUDIT_ROLES)]
+    permission_classes = [role_required(*_AUDIT_ROLES, allow_on_leave=True)]
 
     def get_queryset(self):
         queryset = AuditEvent.objects.select_related("actor")
@@ -44,7 +44,7 @@ class AuditEventListView(generics.ListAPIView):
 
 
 class AuditExportView(APIView):
-    permission_classes = [role_required(*_AUDIT_ROLES)]
+    permission_classes = [role_required(*_AUDIT_ROLES, allow_on_leave=True)]
 
     def get(self, request):
         queryset = AuditEvent.objects.select_related("actor")
@@ -79,7 +79,7 @@ class AuditExportView(APIView):
 
 
 class InvoiceTraceView(APIView):
-    permission_classes = [role_required(*_AUDIT_ROLES)]
+    permission_classes = [role_required(*_AUDIT_ROLES, allow_on_leave=True)]
 
     def get(self, request, invoice_id):
         invoice = get_object_or_404(

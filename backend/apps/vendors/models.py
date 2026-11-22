@@ -113,7 +113,16 @@ class PurchaseOrder(models.Model):
 
 
 class BankChange(models.Model):
-    """Dated change to a vendor's bank details (bank_change_history.csv)."""
+    """Dated change to a vendor's bank details (bank_change_history.csv).
+
+    Historical dataset rows have ``status = None`` (they predate the controlled
+    workflow); changes created through the API use PENDING/APPROVED/REJECTED.
+    """
+
+    class Status(models.TextChoices):
+        PENDING = "PENDING", "Pending"
+        APPROVED = "APPROVED", "Approved"
+        REJECTED = "REJECTED", "Rejected"
 
     change_id = models.CharField(max_length=16, primary_key=True)
     vendor = models.ForeignKey(
@@ -131,6 +140,27 @@ class BankChange(models.Model):
     verified_by_callback = models.CharField(max_length=3, blank=True, default="")
     old_account_last4 = models.CharField(max_length=4, blank=True, default="")
     new_account_last4 = models.CharField(max_length=4, blank=True, default="")
+
+    # Controlled-change workflow (new changes only; historical rows stay null).
+    status = models.CharField(
+        max_length=16,
+        choices=Status.choices,
+        null=True,
+        blank=True,
+        default=None,
+        db_index=True,
+    )
+    note = models.CharField(max_length=255, blank=True, default="")
+    # Full new account, stored to apply on approval; never serialized raw.
+    new_bank_account = models.CharField(max_length=32, blank=True, default="")
+    decided_by = models.ForeignKey(
+        "accounts.User",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="decided_bank_changes",
+    )
+    decided_at = models.DateTimeField(null=True, blank=True)
 
     def __str__(self) -> str:
         return self.change_id
