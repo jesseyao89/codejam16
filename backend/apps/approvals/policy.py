@@ -13,6 +13,7 @@ from decimal import Decimal, InvalidOperation
 
 from django.utils import timezone
 
+from apps.accounts.delegations import active_delegate_for
 from apps.accounts.models import User
 from apps.approvals.models import ApprovalPolicy, ApprovalStep
 from apps.vendors.models import Vendor
@@ -294,12 +295,12 @@ def _department_manager(invoice, exclude=None):
             continue
         if manager.status == User.Status.ACTIVE:
             return manager
+        delegate = active_delegate_for(manager)
         if (
-            manager.status == User.Status.ON_LEAVE
-            and manager.delegate is not None
-            and manager.delegate_id != invoice.requester_id
-            and manager.delegate.is_active
-            and manager.delegate.status == User.Status.ACTIVE
+            delegate is not None
+            and delegate.pk != invoice.requester_id
+            and delegate.is_active
+            and delegate.status == User.Status.ACTIVE
         ):
             # The delegate can act; keep the principal on the step.
             return manager
@@ -321,12 +322,12 @@ def _first_active(role: str, exclude=None, requester=None):
             continue
         if candidate.status == User.Status.ACTIVE:
             return candidate
+        delegate = active_delegate_for(candidate)
         if (
-            candidate.status == User.Status.ON_LEAVE
-            and candidate.delegate is not None
-            and (requester is None or candidate.delegate_id != requester.pk)
-            and candidate.delegate.is_active
-            and candidate.delegate.status == User.Status.ACTIVE
+            delegate is not None
+            and (requester is None or delegate.pk != requester.pk)
+            and delegate.is_active
+            and delegate.status == User.Status.ACTIVE
         ):
             return candidate
     return None
@@ -395,12 +396,12 @@ def _explicit_approver(explicit, role, invoice):
         return None
     if candidate.status == User.Status.ACTIVE:
         return candidate
+    delegate = active_delegate_for(candidate)
     if (
-        candidate.status == User.Status.ON_LEAVE
-        and candidate.delegate is not None
-        and candidate.delegate_id != invoice.requester_id
-        and candidate.delegate.is_active
-        and candidate.delegate.status == User.Status.ACTIVE
+        delegate is not None
+        and delegate.pk != invoice.requester_id
+        and delegate.is_active
+        and delegate.status == User.Status.ACTIVE
     ):
         # Keep the principal so the delegate acts (and is audited as such).
         return candidate

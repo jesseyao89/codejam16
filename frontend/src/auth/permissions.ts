@@ -62,6 +62,22 @@ export const BANK_CHANGE_READ_ROLES = new Set<string>([
   'AUDITOR',
 ])
 
+// Delegations (contract §7.3). Approvers, Finance Managers and Controllers can
+// create their own; a Controller can also create/end for another principal.
+// Auditors can read every delegation but cannot write.
+export const DELEGATION_READ_ROLES = new Set<string>([
+  'APPROVER',
+  'FINANCE_MANAGER',
+  'CONTROLLER',
+  'AUDITOR',
+])
+
+export const DELEGATION_WRITE_ROLES = new Set<string>([
+  'APPROVER',
+  'FINANCE_MANAGER',
+  'CONTROLLER',
+])
+
 export const POLICY_ADMIN_ROLES = new Set<string>(['CONTROLLER'])
 
 export const POLICY_READ_ROLES = new Set<string>(['CONTROLLER', 'AUDITOR'])
@@ -153,6 +169,19 @@ export function canReadVendorBankChanges(
 
 export function isActiveUser(status: string | undefined): boolean {
   return status === 'active'
+}
+
+export function canReadDelegations(role: UserRole | string): boolean {
+  return DELEGATION_READ_ROLES.has(role)
+}
+
+export function canManageDelegations(role: UserRole | string): boolean {
+  return DELEGATION_WRITE_ROLES.has(role)
+}
+
+/** Only a Controller may create or end a delegation for another principal. */
+export function canDelegateForOthers(role: UserRole | string): boolean {
+  return role === 'CONTROLLER'
 }
 
 export function canEditPolicies(role: UserRole | string): boolean {

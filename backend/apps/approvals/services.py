@@ -12,12 +12,14 @@ from django.db.models import Q
 from django.utils import timezone
 from rest_framework.exceptions import PermissionDenied
 
+from apps.accounts.delegations import (
+    is_active_delegate,
+    principals_for_delegate,
+)
 from apps.accounts.exceptions import InvalidStateTransition, SelfApprovalBlocked
 from apps.approvals.models import ApprovalStep
 from apps.audit.services import record_audit
 from apps.invoices.models import Invoice
-
-_ACTIVE_DELEGATE = "on_leave"
 
 
 def approvals_visible_to(user):
@@ -32,7 +34,9 @@ def approvals_visible_to(user):
     invoice_ids = visible_invoices(user).values_list("invoice_id", flat=True)
     assigned = Q(approver=user)
     if user.is_active and user.status == "active":
-        assigned |= Q(approver__delegate=user, approver__status="on_leave")
+        principal_ids = principals_for_delegate(user)
+        if principal_ids:
+            assigned |= Q(approver_id__in=principal_ids)
     # Unassigned role steps stay scoped to invoices the role may already see.
     role_fallback = Q(
         approver__isnull=True,
@@ -62,10 +66,7 @@ def _resolve_actor(step, user):
     if step.approver_id is not None:
         if step.approver_id == user.id:
             return None
-        if (
-            step.approver.delegate_id == user.id
-            and step.approver.status == _ACTIVE_DELEGATE
-        ):
+        if is_active_delegate(step.approver, user):
             return step.approver
         raise PermissionDenied("You are not the approver for this step.")
 

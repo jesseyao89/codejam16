@@ -18,7 +18,7 @@ from django.conf import settings
 from django.contrib.auth.hashers import make_password
 from django.db import transaction
 
-from apps.accounts.models import Department, User
+from apps.accounts.models import Delegation, Department, User
 from apps.approvals.models import ApprovalPolicy, ApprovalStep
 from apps.inbox.loader import load_emails
 from apps.invoices.models import FXRate, GLAccount, Invoice, InvoiceLine, TaxCode
@@ -209,6 +209,23 @@ class Loader:
             user.manager = self.fk(self.users, row.get("manager_id"))
             user.delegate = self.fk(self.users, row.get("delegate_user_id"))
             user.save(update_fields=["manager", "delegate"])
+
+            if user.delegate_id and user.status == User.Status.ON_LEAVE:
+                if not Delegation.objects.filter(principal=user).exists():
+                    starts_at = datetime.now(timezone.utc)
+                    if user.status_since:
+                        starts_at = datetime.combine(
+                            user.status_since,
+                            datetime.min.time(),
+                            tzinfo=timezone.utc,
+                        )
+                    Delegation.objects.create(
+                        delegation_id=f"DEL-{user.user_id or user.pk}",
+                        principal=user,
+                        delegate=user.delegate,
+                        starts_at=starts_at,
+                        ends_at=None,
+                    )
 
     def link_departments(self):
         for row in self.rows("departments"):

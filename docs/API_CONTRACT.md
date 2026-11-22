@@ -883,6 +883,20 @@ DELETE /api/delegations/{id}/   -> 204
 }
 ```
 
+- Principals and delegates must be `APPROVER`, `FINANCE_MANAGER` or
+  `CONTROLLER`, and the delegate must be active. A principal cannot have
+  overlapping active delegations; `ends_at` is optional for an open-ended
+  delegation. `POST` returns `400 VALIDATION_ERROR` for invalid roles, dates or
+  overlaps.
+- A principal can create/end their own delegation; `CONTROLLER` can do so for
+  any principal; `AUDITOR` can read all but cannot write. Other users see only
+  delegations where they are principal or delegate.
+- `DELETE` ends the active delegation by setting `ends_at` (it keeps history)
+  and writes an audit event. Delegated approvals still record
+  `delegated_for_id` and an `on_behalf_of_id` audit evidence.
+- The dataset's seeded on-leave/delegate pairs are backfilled into this model;
+  the legacy `User.delegate` field remains a fallback for old rows.
+
 Actions taken by a delegate return `delegated_for_id` on the approval and set
 `on_behalf_of_id` on the audit event.
 

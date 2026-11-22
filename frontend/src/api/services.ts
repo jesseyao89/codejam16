@@ -152,6 +152,25 @@ export interface Approval {
   acted_at: string | null
 }
 
+// A dated grant of approval authority from a principal to a delegate
+// (contract §7.3). `active` is computed by the server for "now"; scheduled and
+// ended rows keep their history.
+export interface Delegation {
+  id: string
+  principal_id: string | null
+  delegate_id: string | null
+  starts_at: string
+  ends_at: string | null
+  active: boolean
+}
+
+export interface DelegationWritePayload {
+  principal_id?: string
+  delegate_id: string
+  starts_at?: string
+  ends_at?: string
+}
+
 export type PolicyMatch = 'all' | 'any'
 export type PolicyRole = 'APPROVER' | 'FINANCE_MANAGER' | 'CONTROLLER'
 export type PolicyValue =
@@ -690,6 +709,36 @@ export const approvalService = {
     api.post<Invoice>(`/approvals/${encodeURIComponent(id)}/reject/`, {
       comment,
     }),
+}
+
+// -------------------------------------
+// DELEGATIONS
+// -------------------------------------
+
+export const delegationService = {
+  list: (params: PageParams = {}) =>
+    api.get<PaginatedResponse<Delegation>>(
+      `/delegations/${buildQuery(params)}`
+    ),
+
+  listAll: (params: PageParams = {}) =>
+    fetchAllPages((page) =>
+      delegationService.list({ ...params, page, page_size: ALL_PAGES_SIZE })
+    ),
+
+  get: (id: string) =>
+    api.get<Delegation>(`/delegations/${encodeURIComponent(id)}/`),
+
+  create: (payload: DelegationWritePayload) =>
+    api.post<Delegation>('/delegations/', payload),
+
+  /**
+   * Ends an active delegation by setting `ends_at` on the server. History is
+   * preserved; the row is not deleted. Scheduled delegations cannot be
+   * cancelled through this endpoint yet, so the UI only offers it when active.
+   */
+  end: (id: string) =>
+    api.delete<void>(`/delegations/${encodeURIComponent(id)}/`),
 }
 
 // -------------------------------------

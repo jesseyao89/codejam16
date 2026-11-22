@@ -243,6 +243,22 @@ already `PAID`, and §13 normalization mappings.
 - **Finding codes** are stable; messages explain expected/actual amounts and
   reference IDs in `evidence`.
 
+## Delegation (Nov 2026)
+
+- **Dated model.** `accounts.Delegation` records principal, delegate,
+  `starts_at`, optional `ends_at`, `created_by` and creation time. Active means
+  `starts_at <= now <= ends_at` (or no end). One active delegation per principal;
+  overlaps are rejected.
+- **API.** `GET/POST /api/delegations/`, `GET/DELETE /api/delegations/{id}/`.
+  Principals manage their own; Controller manages anyone; Auditor reads all;
+  others see only their own rows. `DELETE` ends (sets `ends_at`) rather than
+  deleting history.
+- **Enforcement.** Approval actions, visibility, dashboard counts and policy
+  manager resolution use `active_delegation_for`/`is_active_delegate`, which
+  fall back to the seeded `User.delegate` + `on_leave` pair for legacy rows.
+- **Audit.** `DELEGATION_CREATED`/`DELEGATION_ENDED` record before/after;
+  delegated approvals still record `delegated_for_id`.
+
 ## Known limitations / next steps
 
 - Extraction supports text PDFs plus scanned PDF pages and PNG/JPEG uploads via

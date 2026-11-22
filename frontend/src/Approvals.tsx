@@ -39,9 +39,11 @@ import RefreshIcon from '@mui/icons-material/Refresh'
 
 import {
   approvalService,
+  delegationService,
   invoiceService,
   type Approval,
   type ApprovalStatus,
+  type Delegation,
   type Invoice,
   type User,
 } from './api/services'
@@ -49,6 +51,7 @@ import {
 import { describeError, type ErrorPresentation } from './api/errors'
 import {
   canDecideApproval,
+  canReadDelegations,
   isActiveUser,
 } from './auth/permissions'
 
@@ -139,6 +142,10 @@ function formatValidation(status: string | null): string {
   return status ? status.replace(/_/g, ' ') : 'Not analyzed'
 }
 
+function formatCoverEnd(endsAt: string | null): string {
+  return endsAt ? `until ${formatDateTime(endsAt)}` : 'with no end date'
+}
+
 function DetailRow({
   label,
   children,
@@ -168,11 +175,13 @@ function DetailRow({
 interface ApprovalsProps {
   user: User
   onDataChanged: () => void | Promise<void>
+  onOpenDelegations?: () => void
 }
 
 export default function Approvals({
   user,
   onDataChanged,
+  onOpenDelegations,
 }: ApprovalsProps) {
   const [scope, setScope] = useState<Scope>('mine')
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('ALL')
@@ -199,6 +208,8 @@ export default function Approvals({
     useState<ErrorPresentation | null>(null)
 
   const [notice, setNotice] = useState('')
+
+  const [delegations, setDelegations] = useState<Delegation[]>([])
 
   // --------------------------------------------------
   // LOAD
@@ -246,6 +257,28 @@ export default function Approvals({
 
     void load()
   }, [loadApprovals])
+
+  // Active delegations explain who is covering whom and let a delegate act
+  // from "All visible" without switching scope. A failed load is non-fatal:
+  // the queue still works and the server still enforces the delegation.
+  useEffect(() => {
+    if (!canReadDelegations(user.role)) return
+
+    let cancelled = false
+
+    delegationService
+      .listAll()
+      .then((response) => {
+        if (!cancelled) setDelegations(response.results)
+      })
+      .catch(() => {
+        if (!cancelled) setDelegations([])
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [user.role])
 
   // Load the full invoice when a step is opened. The approval payload only
   // carries `invoice_id`; the decision screen needs the invoice, its findings
@@ -298,6 +331,20 @@ export default function Approvals({
   const isRequester = invoice?.requester_id === user.id
   const activeAccount = isActiveUser(user.status)
 
+  // Only active rows grant authority; `active` is server-computed for "now".
+  const activeDelegations = delegations.filter((item) => item.active)
+  const incomingDelegations = activeDelegations.filter(
+    (item) => item.delegate_id === user.id
+  )
+  const outgoingDelegations = activeDelegations.filter(
+    (item) => item.principal_id === user.id
+  )
+  const delegatedPrincipalIds = new Set(
+    incomingDelegations
+      .map((item) => item.principal_id)
+      .filter((id): id is string => Boolean(id))
+  )
+
   const currentPendingStep = invoice
     ? invoice.approvals
         .filter((step) => step.status === 'PENDING')
@@ -310,7 +357,11 @@ export default function Approvals({
       currentPendingStep.step_no === selected.step_no
   )
 
-  const assignedToUser = selected?.approver?.id === user.id
+  const assignedApproverId = selected?.approver?.id ?? null
+  const actingAsDelegate = Boolean(
+    assignedApproverId && delegatedPrincipalIds.has(assignedApproverId)
+  )
+  const assignedToUser = assignedApproverId === user.id || actingAsDelegate
   const canActInScope = scope === 'mine' || assignedToUser
   const canDecide =
     canDecideRole &&
@@ -332,7 +383,7 @@ export default function Approvals({
           ? 'Only the current pending step can be decided. A previous step still needs a decision.'
           : !canActInScope
             ? selected?.approver
-              ? `This step is assigned to ${selected.approver.full_name}. Switch to “Assigned to me” if it is yours or delegated to you.`
+              ? `This step is assigned to ${selected.approver.full_name}, and you have no active delegation for them. Switch to “Assigned to me” to act on steps routed to your role.`
               : 'Switch to “Assigned to me” to act on steps routed to your role.'
             : null
 
@@ -412,6 +463,57 @@ export default function Approvals({
 
   return (
     <Box>
+      {/* DELEGATION COVER */}
+      {(incomingDelegations.length > 0 ||
+        outgoingDelegations.length > 0) && (
+        <Stack spacing={1} sx={{ mb: 3 }}>
+          {incomingDelegations.map((delegation) => (
+            <Alert
+              key={delegation.id}
+              severity="info"
+              action={
+                onOpenDelegations ? (
+                  <Button
+                    color="inherit"
+                    size="small"
+                    onClick={onOpenDelegations}
+                  >
+                    Manage
+                  </Button>
+                ) : undefined
+              }
+            >
+              You are covering{' '}
+              <strong>{delegation.principal_id}</strong>&apos;s approvals{' '}
+              {formatCoverEnd(delegation.ends_at)}. Any decision you make is
+              recorded as delegated.
+            </Alert>
+          ))}
+
+          {outgoingDelegations.map((delegation) => (
+            <Alert
+              key={delegation.id}
+              severity="success"
+              action={
+                onOpenDelegations ? (
+                  <Button
+                    color="inherit"
+                    size="small"
+                    onClick={onOpenDelegations}
+                  >
+                    Manage
+                  </Button>
+                ) : undefined
+              }
+            >
+              <strong>{delegation.delegate_id}</strong> is covering your
+              approvals {formatCoverEnd(delegation.ends_at)}. They can decide
+              the steps assigned to you.
+            </Alert>
+          ))}
+        </Stack>
+      )}
+
       {/* HEADER / FILTERS */}
       <Card sx={{ mb: 3 }}>
         <CardContent sx={{ p: 3 }}>
@@ -495,7 +597,7 @@ export default function Approvals({
             {scope === 'mine' && statusFilter === 'PENDING'
               ? 'Steps assigned to you that need a decision now.'
               : scope === 'mine'
-                ? 'Steps assigned to you, your active delegate, or your role.'
+                ? 'Steps assigned to you, your active delegation, or your role.'
                 : 'Every approval step visible to your role.'}{' '}
             {total} step{total === 1 ? '' : 's'} in this view.
           </Typography>
@@ -1039,9 +1141,21 @@ export default function Approvals({
                   {selected.approver &&
                     selected.approver.id !== user.id && (
                       <Alert severity="info" sx={{ mb: 2 }}>
-                        This step is assigned to {selected.approver.full_name}.
-                        You are acting through delegation or the server will
-                        verify the assignment.
+                        {actingAsDelegate ? (
+                          <>
+                            You are acting for{' '}
+                            {selected.approver.full_name} under an active
+                            delegation. The step records{' '}
+                            <code>delegated_for_id</code> and the audit trail
+                            shows who acted on whose behalf.
+                          </>
+                        ) : (
+                          <>
+                            This step is assigned to{' '}
+                            {selected.approver.full_name}. The server rejects
+                            the decision unless you are their active delegate.
+                          </>
+                        )}
                       </Alert>
                     )}
 

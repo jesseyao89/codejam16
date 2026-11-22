@@ -1,5 +1,12 @@
+from uuid import uuid4
+
 from django.contrib.auth.models import AbstractUser
 from django.db import models
+from django.utils import timezone
+
+
+def _delegation_id() -> str:
+    return f"DEL-{uuid4().hex[:8].upper()}"
 
 
 class Department(models.Model):
@@ -86,3 +93,49 @@ class User(AbstractUser):
 
     def __str__(self) -> str:
         return f"{self.get_full_name() or self.username} ({self.role})"
+
+
+class Delegation(models.Model):
+    """A dated delegation of approval authority from a principal to a delegate."""
+
+    delegation_id = models.CharField(
+        max_length=32, primary_key=True, default=_delegation_id, editable=False
+    )
+    principal = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="delegations_given",
+    )
+    delegate = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="delegations_received",
+    )
+    starts_at = models.DateTimeField(default=timezone.now, db_index=True)
+    ends_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    created_by = models.ForeignKey(
+        User,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="delegations_created",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ("-starts_at",)
+        indexes = [
+            models.Index(fields=["principal", "starts_at"]),
+            models.Index(fields=["delegate", "starts_at"]),
+        ]
+
+    def is_active(self, at=None) -> bool:
+        at = at or timezone.now()
+        if self.starts_at and self.starts_at > at:
+            return False
+        if self.ends_at is not None and self.ends_at < at:
+            return False
+        return True
+
+    def __str__(self) -> str:
+        return f"{self.delegation_id}: {self.principal_id} -> {self.delegate_id}"
