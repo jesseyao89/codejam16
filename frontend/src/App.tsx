@@ -6,6 +6,8 @@ import Payments from './Payments'
 import Settings from './Settings'
 import Login from './Login'
 
+import EmailAssistant from './EmailAssistant'
+
 import {
   authService,
   invoiceService,
@@ -106,6 +108,7 @@ const menuItems = [
   { label: 'Invoices', icon: <ReceiptLongIcon /> },
   { label: 'Approvals', icon: <FactCheckIcon /> },
   { label: 'AI Review', icon: <SmartToyIcon /> },
+  { label: 'AI Email Assistant', icon: <SmartToyIcon /> },
   { label: 'Payments', icon: <PaymentsIcon /> },
   { label: 'Settings', icon: <SettingsIcon /> },
 ]
@@ -791,6 +794,7 @@ function App() {
 
           {currentPage === 'Approvals' && <Approvals />}
           {currentPage === 'AI Review' && <AIReview />}
+          {currentPage === 'AI Email Assistant' && <EmailAssistant />}
           {currentPage === 'Payments' && <Payments />}
           {currentPage === 'Settings' && <Settings />}
 
