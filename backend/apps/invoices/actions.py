@@ -9,9 +9,11 @@ from __future__ import annotations
 from datetime import date
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
+from uuid import uuid4
 
 from django.conf import settings
 from django.db import transaction
+from django.db.models import Max
 from django.utils import timezone
 from rest_framework.exceptions import NotFound, ValidationError
 
@@ -472,7 +474,15 @@ def submit_invoice(invoice, actor) -> Invoice:
 
     previous = invoice.status
     with transaction.atomic():
-        ApprovalStep.objects.bulk_create(build_approval_chain(invoice))
+        # On resubmit, drop leftover pending steps but keep the decision history
+        # (approved/rejected steps remain for the audit trail).
+        ApprovalStep.objects.filter(invoice=invoice, action="").delete()
+        existing_max = (
+            invoice.approval_steps.aggregate(max_step=Max("step_no"))["max_step"] or 0
+        )
+        ApprovalStep.objects.bulk_create(
+            build_approval_chain(invoice, start_step_no=existing_max + 1)
+        )
         invoice.status = Invoice.Status.PENDING_APPROVAL
         invoice.save(update_fields=["status"])
         _clear_prefetch(invoice, "approval_steps")
@@ -487,12 +497,19 @@ def submit_invoice(invoice, actor) -> Invoice:
     return invoice
 
 
-def build_approval_chain(invoice) -> list[ApprovalStep]:
+def _next_approval_ids(count: int) -> list[str]:
+    # Opaque, collision-free ids. Avoid reusing freed numeric ids so audit
+    # references can never be confused with a later step.
+    return [f"APR-{uuid4().hex[:12].upper()}" for _ in range(count)]
+
+
+def build_approval_chain(invoice, start_step_no: int = 1) -> list[ApprovalStep]:
     """Deterministic baseline routing (docs/decisions.md).
 
-    Step 1 is the department manager (escalated past a self-approval); step 2 is
-    FINANCE_MANAGER when the amount exceeds the manager's limit or the vendor is
-    not active. The full structured policy engine is a later slice.
+    The first step is the department manager (escalated past a self-approval);
+    the next is FINANCE_MANAGER when the amount exceeds the manager's limit or
+    the vendor is not active. The full structured policy engine is a later
+    slice. ``start_step_no`` keeps the step numbers increasing across resubmits.
     """
     amount_cad = invoice.total_cad if invoice.total_cad is not None else invoice.total
 
@@ -505,7 +522,7 @@ def build_approval_chain(invoice) -> list[ApprovalStep]:
     steps = [
         ApprovalStep(
             invoice=invoice,
-            step_no=1,
+            step_no=start_step_no,
             approver=approver,
             approver_role=User.Role.APPROVER,
             action="",
@@ -531,11 +548,13 @@ def build_approval_chain(invoice) -> list[ApprovalStep]:
         steps.append(
             ApprovalStep(
                 invoice=invoice,
-                step_no=2,
+                step_no=start_step_no + 1,
                 approver=finance,
                 approver_role=User.Role.FINANCE_MANAGER,
                 action="",
             )
         )
 
+    for step, approval_id in zip(steps, _next_approval_ids(len(steps))):
+        step.approval_id = approval_id
     return steps

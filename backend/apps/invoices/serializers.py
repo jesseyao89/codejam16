@@ -145,8 +145,7 @@ class ApprovalStepSerializer(serializers.ModelSerializer):
         }
 
     def get_delegated_for_id(self, obj):
-        # Delegation is implemented in the approval slice; null for now.
-        return None
+        return obj.delegated_for.user_id if obj.delegated_for else None
 
     def get_reason(self, obj):
         if obj.approver_role == "FINANCE_MANAGER":

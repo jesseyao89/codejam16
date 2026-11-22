@@ -39,6 +39,13 @@ class ApprovalStep(models.Model):
         on_delete=models.SET_NULL,
         related_name="approval_steps",
     )
+    delegated_for = models.ForeignKey(
+        "accounts.User",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="delegated_approval_steps",
+    )
     approver_role = models.CharField(max_length=32, blank=True, default="")
     action = models.CharField(max_length=16, choices=Action.choices)
     acted_at = models.DateTimeField(null=True, blank=True)
