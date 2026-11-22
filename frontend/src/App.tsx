@@ -1055,7 +1055,7 @@ function App() {
               }
             />
           )}
-          {currentPage === 'Settings' && <Settings />}
+          {currentPage === 'Settings' && <Settings user={user} />}
 
           {/* INVOICE DETAILS */}
 

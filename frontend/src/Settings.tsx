@@ -33,9 +33,12 @@ import LockOutlinedIcon from '@mui/icons-material/LockOutlined'
 import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircle'
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined'
 
+import ApprovalPolicies from './ApprovalPolicies'
+
 import {
   referenceService,
   type Department,
+  type User,
 } from './api/services'
 
 import { describeError, type ErrorPresentation } from './api/errors'
@@ -48,33 +51,6 @@ type Policy = {
   required: string
   notes: string
 }
-
-const approvalPolicies: Policy[] = [
-  {
-    id: 'P01',
-    condition: 'Up to $10,000 CAD',
-    required: 'Department approver',
-    notes: "Within the department manager's limit",
-  },
-  {
-    id: 'P02',
-    condition: 'Over $10,000 CAD',
-    required: 'Department approver → Finance Manager',
-    notes: 'Above the department limit',
-  },
-  {
-    id: 'P03',
-    condition: 'New or on-hold vendor',
-    required: 'Department approver → Finance Manager',
-    notes: 'Additional finance review',
-  },
-  {
-    id: 'P04',
-    condition: 'Legal invoices',
-    required: 'Department approver → Finance Manager',
-    notes: 'Finance review required by policy',
-  },
-]
 
 const additionalControls = [
   {
@@ -309,7 +285,7 @@ function ControlList({
   )
 }
 
-export default function Settings() {
+export default function Settings({ user }: { user: User }) {
   const [activeSection, setActiveSection] = useState<Section>('General')
   const [departmentSearch, setDepartmentSearch] = useState('')
 
@@ -469,7 +445,7 @@ export default function Settings() {
                   ['Environment', 'Hackathon Demo'],
                   ['Dataset', 'Harborline Logistics (Synthetic)'],
                   ['Currency', 'CAD'],
-                  ['Policy Configuration', 'Reference only (API pending)'],
+                  ['Policy Configuration', 'Approval policies via Controller'],
                   ['Payment Execution', 'Simulation Only'],
                 ].map(([label, value], index) => (
                   <Box key={label}>
@@ -512,8 +488,9 @@ export default function Settings() {
                 icon={<InfoOutlinedIcon />}
                 sx={{ mt: 3 }}
               >
-                Settings are currently read-only. Changes will
-                require backend authorization and audit logging.
+                Reference settings are read-only. Approval policies are
+                editable by the Controller and audited; departments are loaded
+                from the API.
               </Alert>
             </>
           )}
@@ -523,33 +500,17 @@ export default function Settings() {
             <>
               <SectionHeading
                 title="Approval Policies"
-                description="Review invoice approval requirements and internal controls."
+                description="Manage the bounded routing policies evaluated on invoice submission."
               />
 
-              <Alert severity="info" sx={{ mb: 3 }}>
-                Illustrative configuration. The approval-policy API is not
-                available in this backend build, so these thresholds are not
-                read from or enforced by the routing engine.
-              </Alert>
+              <ApprovalPolicies user={user} />
 
               <Typography
                 variant="subtitle2"
                 sx={{
                   fontWeight: 700,
                   color: '#263451',
-                  mb: 1.5,
-                }}
-              >
-                Invoice Approval Thresholds
-              </Typography>
-
-              <PolicyTable policies={approvalPolicies} />
-
-              <Typography
-                variant="subtitle2"
-                sx={{
-                  fontWeight: 700,
-                  color: '#263451',
+                  mt: 4,
                   mb: 1.5,
                 }}
               >
@@ -569,9 +530,8 @@ export default function Settings() {
               />
 
               <Alert severity="info" sx={{ mb: 3 }}>
-                Illustrative configuration. Policy administration is not
-                connected to the backend in this build; the release rules below
-                describe the intended controls, not a configurable API.
+                Payment release limits are enforced by the payments API.
+                They are not configured here; this table is reference only.
               </Alert>
 
               <Typography

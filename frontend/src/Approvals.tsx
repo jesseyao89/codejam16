@@ -47,7 +47,10 @@ import {
 } from './api/services'
 
 import { describeError, type ErrorPresentation } from './api/errors'
-import { canDecideApproval } from './auth/permissions'
+import {
+  canDecideApproval,
+  isActiveUser,
+} from './auth/permissions'
 
 // --------------------------------------------------
 // HELPERS
@@ -293,7 +296,45 @@ export default function Approvals({
 
   const canDecideRole = canDecideApproval(user.role)
   const isRequester = invoice?.requester_id === user.id
-  const canDecide = canDecideRole && !isRequester
+  const activeAccount = isActiveUser(user.status)
+
+  const currentPendingStep = invoice
+    ? invoice.approvals
+        .filter((step) => step.status === 'PENDING')
+        .sort((left, right) => left.step_no - right.step_no)[0] ?? null
+    : null
+
+  const isCurrentStep = Boolean(
+    selected &&
+      currentPendingStep &&
+      currentPendingStep.step_no === selected.step_no
+  )
+
+  const assignedToUser = selected?.approver?.id === user.id
+  const canActInScope = scope === 'mine' || assignedToUser
+  const canDecide =
+    canDecideRole &&
+    activeAccount &&
+    !isRequester &&
+    invoice?.status === 'PENDING_APPROVAL' &&
+    isCurrentStep &&
+    canActInScope
+
+  const decisionBlockedReason = !activeAccount
+    ? 'Your account is not active. You can review this step but cannot decide it.'
+    : !invoice
+      ? invoiceLoading
+        ? 'Loading invoice details before decisions are enabled.'
+        : 'Invoice details are unavailable, so this step cannot be decided.'
+      : invoice.status !== 'PENDING_APPROVAL'
+        ? 'This invoice is not currently awaiting approval.'
+        : !isCurrentStep
+          ? 'Only the current pending step can be decided. A previous step still needs a decision.'
+          : !canActInScope
+            ? selected?.approver
+              ? `This step is assigned to ${selected.approver.full_name}. Switch to “Assigned to me” if it is yours or delegated to you.`
+              : 'Switch to “Assigned to me” to act on steps routed to your role.'
+            : null
 
   // --------------------------------------------------
   // ACTIONS
@@ -986,7 +1027,12 @@ export default function Approvals({
               ) : !canDecideRole ? (
                 <Alert severity="info">
                   Your role ({formatRole(user.role)}) cannot approve or reject
-                  invoices. Only Approvers and Finance Managers can decide.
+                  invoices. Approvers, Finance Managers and Controllers can
+                  decide, depending on the step they are assigned to.
+                </Alert>
+              ) : decisionBlockedReason ? (
+                <Alert severity={activeAccount ? 'info' : 'warning'}>
+                  {decisionBlockedReason}
                 </Alert>
               ) : (
                 <>
@@ -994,8 +1040,8 @@ export default function Approvals({
                     selected.approver.id !== user.id && (
                       <Alert severity="info" sx={{ mb: 2 }}>
                         This step is assigned to {selected.approver.full_name}.
-                        If you are not that approver or their active delegate,
-                        the server will refuse the decision.
+                        You are acting through delegation or the server will
+                        verify the assignment.
                       </Alert>
                     )}
 

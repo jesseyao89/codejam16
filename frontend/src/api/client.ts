@@ -128,6 +128,11 @@ export const api = {
       body: JSON.stringify(data),
     }),
 
+  delete: <T>(endpoint: string) =>
+    request<T>(endpoint, {
+      method: 'DELETE',
+    }),
+
   upload: <T>(endpoint: string, file: File) => {
     const formData = new FormData()
     formData.append('file', file)

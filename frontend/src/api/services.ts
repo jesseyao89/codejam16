@@ -152,6 +152,50 @@ export interface Approval {
   acted_at: string | null
 }
 
+export type PolicyMatch = 'all' | 'any'
+export type PolicyRole = 'APPROVER' | 'FINANCE_MANAGER' | 'CONTROLLER'
+export type PolicyValue =
+  | string
+  | boolean
+  | number
+  | Array<string | boolean | number>
+  | null
+
+export interface PolicyRule {
+  field: string
+  op: string
+  value?: PolicyValue
+}
+
+export interface PolicyConditions {
+  match?: PolicyMatch
+  rules?: PolicyRule[]
+}
+
+export interface PolicyStep {
+  step_no?: number
+  role: PolicyRole
+  approver_id?: string | null
+}
+
+export interface Policy {
+  id: string
+  name: string
+  priority: number
+  active: boolean
+  conditions: PolicyConditions
+  steps: PolicyStep[]
+  rule_type?: string
+}
+
+export interface PolicyWritePayload {
+  name: string
+  priority: number
+  active: boolean
+  conditions: PolicyConditions
+  steps: PolicyStep[]
+}
+
 export interface TaxLine {
   tax_code: string
   rate?: string
@@ -369,6 +413,10 @@ export interface ApprovalListParams extends PageParams {
   status?: ApprovalStatus
   mine?: boolean
   actionable?: boolean
+}
+
+export interface PolicyListParams extends PageParams {
+  active?: boolean
 }
 
 export interface PaymentListParams extends PageParams {
@@ -642,6 +690,32 @@ export const approvalService = {
     api.post<Invoice>(`/approvals/${encodeURIComponent(id)}/reject/`, {
       comment,
     }),
+}
+
+// -------------------------------------
+// POLICY ADMINISTRATION
+// -------------------------------------
+
+export const policyService = {
+  list: (params: PolicyListParams = {}) =>
+    api.get<PaginatedResponse<Policy>>(`/policies/${buildQuery(params)}`),
+
+  listAll: (params: PolicyListParams = {}) =>
+    fetchAllPages((page) =>
+      policyService.list({ ...params, page, page_size: ALL_PAGES_SIZE })
+    ),
+
+  get: (id: string) =>
+    api.get<Policy>(`/policies/${encodeURIComponent(id)}/`),
+
+  create: (payload: PolicyWritePayload) =>
+    api.post<Policy>('/policies/', payload),
+
+  update: (id: string, payload: Partial<PolicyWritePayload>) =>
+    api.patch<Policy>(`/policies/${encodeURIComponent(id)}/`, payload),
+
+  archive: (id: string) =>
+    api.delete<void>(`/policies/${encodeURIComponent(id)}/`),
 }
 
 // -------------------------------------

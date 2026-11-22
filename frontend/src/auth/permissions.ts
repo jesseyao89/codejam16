@@ -15,6 +15,7 @@ export const EDIT_INVOICE_ROLES = new Set<string>([
 export const DECISION_ROLES = new Set<string>([
   'APPROVER',
   'FINANCE_MANAGER',
+  'CONTROLLER',
 ])
 
 export const PREPARE_PAYMENT_ROLES = new Set<string>([
@@ -62,6 +63,8 @@ export const BANK_CHANGE_READ_ROLES = new Set<string>([
 ])
 
 export const POLICY_ADMIN_ROLES = new Set<string>(['CONTROLLER'])
+
+export const POLICY_READ_ROLES = new Set<string>(['CONTROLLER', 'AUDITOR'])
 
 export const USER_ADMIN_ROLES = new Set<string>(['CONTROLLER'])
 
@@ -154,6 +157,10 @@ export function isActiveUser(status: string | undefined): boolean {
 
 export function canEditPolicies(role: UserRole | string): boolean {
   return POLICY_ADMIN_ROLES.has(role)
+}
+
+export function canReadPolicies(role: UserRole | string): boolean {
+  return POLICY_READ_ROLES.has(role)
 }
 
 export function canManageUsers(role: UserRole | string): boolean {
