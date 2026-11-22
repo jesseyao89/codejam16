@@ -18,7 +18,7 @@ _WRITE_ROLES = {"AP_CLERK", "FINANCE_MANAGER", "CONTROLLER"}
 
 class InboxListView(generics.ListAPIView):
     serializer_class = EmailSerializer
-    permission_classes = [role_required(*_READ_ROLES)]
+    permission_classes = [role_required(*_READ_ROLES, allow_on_leave=True)]
 
     def get_queryset(self):
         queryset = Email.objects.prefetch_related("attachments__invoice").order_by(
@@ -39,7 +39,7 @@ class InboxListView(generics.ListAPIView):
 
 class InboxDetailView(generics.RetrieveAPIView):
     serializer_class = EmailSerializer
-    permission_classes = [role_required(*_READ_ROLES)]
+    permission_classes = [role_required(*_READ_ROLES, allow_on_leave=True)]
     lookup_field = "email_id"
     lookup_url_kwarg = "email_id"
     queryset = Email.objects.prefetch_related("attachments__invoice")

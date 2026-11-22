@@ -198,6 +198,18 @@ def run_analysis(invoice) -> dict:
                 "evidence": {"vendor_name": (invoice.raw_extraction or {}).get("vendor_name")},
             }
         )
+    elif invoice.vendor.status != Vendor.Status.ACTIVE:
+        findings.append(
+            {
+                "code": "VENDOR_ON_HOLD",
+                "severity": "BLOCK",
+                "message": "The vendor is not approved for payment.",
+                "evidence": {
+                    "vendor_id": invoice.vendor_id,
+                    "vendor_status": invoice.vendor.status,
+                },
+            }
+        )
 
     findings = findings_mod.attach_finding_ids(findings)
     invoice.findings = findings

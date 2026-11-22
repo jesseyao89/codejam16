@@ -128,6 +128,34 @@ already `PAID`, and §13 normalization mappings.
   PNG scans currently fail text extraction and land as blocked drafts (OCR is a
   later hardening item).
 
+## Vendor writes (Nov 2026)
+
+- **Onboarding + lifecycle.** `POST /api/vendors/` creates `pending_review` with
+  a generated `V###` id; approve/hold/unhold are Finance/Controller actions.
+  Invoices for non-active vendors get a `VENDOR_ON_HOLD` BLOCK.
+- **Bank details are a controlled action.** `PATCH` cannot touch bank fields
+  (400). A request creates a `PENDING` `BankChange` (the full new account is
+  stored but never serialized; only last4 is exposed). Approval applies it to
+  the vendor and sets `verified_by_callback="yes"`; rejection leaves the vendor
+  unchanged.
+- **Separation of duties.** The requester cannot approve/reject their own bank
+  change.
+- **Historical rows.** Dataset bank changes keep `status`/`decided_*` null (they
+  predate the workflow); new changes use PENDING/APPROVED/REJECTED.
+- **One pending change at a time.** A second request while one is pending is
+  `409`; decisions lock the change and the vendor. A rejected change clears the
+  stored account and is excluded from `UNVERIFIED_BANK_CHANGE` (it was never
+  applied).
+- **Status handling.** Vendor statuses from the dataset are case/format
+  normalised (`Active` → `active`, `on-hold` → `on_hold`); unknown values default
+  to `pending_review` and are logged. `hold` is only valid from `active`;
+  `on_leave` users can read but not write.
+- **PATCH validation.** Vendor input is validated through a serializer (shape
+  only): blank `legal_name`, invalid types, and unknown fields are `400`; bank
+  fields are never accepted here.
+- **Audit.** `VENDOR_ONBOARDED/UPDATED/APPROVED/HELD/UNHELD` and
+  `BANK_CHANGE_REQUESTED/APPROVED/REJECTED`.
+
 ## Known limitations / next steps
 
 - Extraction is **text-PDF only** (no OCR, no proven French/scan support) and

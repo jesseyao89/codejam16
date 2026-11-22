@@ -123,7 +123,7 @@ Severity          BLOCK | WARNING
 ApprovalStatus    PENDING | APPROVED | REJECTED
 PaymentStatus     PREPARED | SCHEDULED | RELEASED | PAID | FAILED | CANCELLED
 VendorStatus      active | on_hold | pending_review
-BankChangeStatus  pending | approved | rejected
+BankChangeStatus  PENDING | APPROVED | REJECTED (null for historical rows)
 EmailClass        INVOICE | NOT_INVOICE | UNCERTAIN
 EmailStatus       NEW | INGESTED | PARTIAL | ROUTED | DISMISSED
 EmailAttachmentStatus NEW | INGESTED | FAILED
@@ -628,11 +628,25 @@ POST   /api/vendors/{id}/bank-changes/{change_id}/approve/ -> BankChange
 POST   /api/vendors/{id}/bank-changes/{change_id}/reject/  -> BankChange
 ```
 
-- Onboarding creates `pending_review`; invoices for non-`active` vendors raise
-  `VENDOR_UNKNOWN` / `VENDOR_ON_HOLD`.
-- Bank details are never directly `PATCH`-able. A change creates a `pending`
-  `BankChange`; invoices from a vendor with a recent unverified change get
-  `UNVERIFIED_BANK_CHANGE`.
+- Onboarding creates `pending_review`. Invoices for `on_hold` or
+  `pending_review` vendors get a `VENDOR_ON_HOLD` BLOCK finding; unknown vendors
+  get `VENDOR_UNKNOWN`.
+- **Reads**: vendor list/detail are available to any authenticated user (bank
+  details masked); bank-change history is `AP_CLERK`/`FINANCE_MANAGER`/
+  `CONTROLLER`/`AUDITOR`. `on_leave` users may read but not perform writes.
+- **Writes**: onboard/PATCH/approve/hold/unhold are `FINANCE_MANAGER`/
+  `CONTROLLER`. `hold` is only valid from `active` (a `pending_review` vendor is
+  already blocked). A bank-change **request** may also be made by `AP_CLERK`;
+  approve/reject is `FINANCE_MANAGER`/`CONTROLLER`, and the requester cannot
+  decide their own change.
+- **One pending change per vendor.** A second request while one is `PENDING`
+  returns `409 INVALID_STATE_TRANSITION`.
+- Bank details are never directly `PATCH`-able (attempting it is
+  `400 VALIDATION_ERROR`). A request creates a `PENDING` `BankChange`; approval
+  applies the new account (4-32 digits) to the vendor and sets
+  `verified_by_callback: "yes"`. A rejected change is not applied, does not
+  retain the account number, and does not trigger `UNVERIFIED_BANK_CHANGE`.
+- `pending_bank_change` on `Vendor` is the masked pending change (or `null`).
 - Bank account numbers are masked in every response and log.
 
 **Vendor**
@@ -669,24 +683,23 @@ POST   /api/vendors/{id}/bank-changes/{change_id}/reject/  -> BankChange
 {
   "id": "BC-001",
   "vendor_id": "V015",
-  "status": "pending",
+  "status": "PENDING",
   "changed_at": "2026-01-14",
   "requested_by_id": "U020",
-  "request_channel": "email_request",
+  "request_channel": "api",
   "verified_by_callback": "no",
   "old_account_last4": "4821",
   "new_account_last4": "9933",
+  "note": "Called vendor on the number on file",
   "decided_by_id": null,
   "decided_at": null
 }
 ```
 
-The current read-only backend is loaded from historical bank-change records,
-which do not include lifecycle status or decision metadata. Until the controlled
-bank-change actions add those fields, `status`, `decided_by_id`, and
-`decided_at` are returned as `null`; do not infer them from callback verification.
-Follow-up: persist these fields and replace the temporary nulls when implementing
-the bank-change mutation/approval flow.
+Historical dataset rows predate the controlled workflow, so `status`,
+`decided_by_id`, and `decided_at` are `null` for them; do not infer a status from
+`verified_by_callback`. New changes use `PENDING`/`APPROVED`/`REJECTED`, and an
+approval applies the new bank account to the vendor.
 
 ## 7. Approvals, policies & delegation (feature 6)
 
