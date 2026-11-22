@@ -1,5 +1,13 @@
 import { useState } from 'react'
 
+import Approvals from './Approvals'
+
+import AIReview from './AIReview'
+
+import Payments from './Payments'
+
+import Settings from './Settings'
+
 import {
   Box,
   Button,
@@ -518,9 +526,17 @@ function App() {
                 </Typography>
               )}
             </>
-          ) : (
-            // OTHER PAGES (PLACEHOLDERS)
-            <Card>
+         ) : currentPage === 'Approvals' ? (
+  <Approvals />
+) : currentPage === 'AI Review' ? (
+  <AIReview />
+) : currentPage === 'Payments' ? (
+  <Payments />
+) : currentPage === 'Settings' ? (
+  <Settings />
+) : (
+  // OTHER PAGES (PLACEHOLDERS)
+  <Card>
               <CardContent>
                 <Typography variant="h6">
                   {currentPage}
