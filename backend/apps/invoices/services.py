@@ -12,7 +12,8 @@ import re
 from datetime import date, datetime
 from decimal import Decimal
 
-from apps.invoices.models import GLAccount, Invoice
+from apps.accounts.models import Department
+from apps.invoices.models import GLAccount, Invoice, InvoiceLine
 from apps.payments.models import Payment
 from apps.vendors.models import BankChange, Contract, PurchaseOrder, Vendor
 
@@ -29,8 +30,15 @@ def _serialize(obj: dict) -> dict:
     return {k: _iso(v) for k, v in obj.items()}
 
 
-def build_reference_data() -> dict:
-    """Build the ``reference_data`` dict consumed by ``analyze_invoice``."""
+def build_reference_data(
+    vendor_id: str | None = None,
+    exclude_invoice_id: str | None = None,
+) -> dict:
+    """Build the ``reference_data`` dict consumed by ``analyze_invoice``.
+
+    ``vendor_id`` scopes the historical coding lines to the vendor being
+    analyzed; ``exclude_invoice_id`` keeps an invoice from matching itself.
+    """
     # Payment method per invoice (prefer CARD when an invoice has several), so
     # duplicate findings can surface "already paid by card" evidence.
     payment_methods: dict[str, str] = {}
@@ -101,12 +109,44 @@ def build_reference_data() -> dict:
         for a in GLAccount.objects.all()
     ]
 
+    line_queryset = InvoiceLine.objects.values(
+        "invoice_id",
+        "invoice__vendor_id",
+        "description",
+        "gl_account_id",
+        "department_id",
+        "line_type",
+    )
+    if vendor_id:
+        line_queryset = line_queryset.filter(invoice__vendor_id=vendor_id)
+    if exclude_invoice_id:
+        line_queryset = line_queryset.exclude(invoice_id=exclude_invoice_id)
+
+    historical_lines = [
+        dict(
+            invoice_id=row["invoice_id"],
+            vendor_id=row["invoice__vendor_id"],
+            description=row["description"],
+            gl_account=row["gl_account_id"],
+            department_id=row["department_id"],
+            line_type=row["line_type"],
+        )
+        for row in line_queryset
+    ]
+
+    departments = [
+        dict(department_id=d.department_id, name=d.name)
+        for d in Department.objects.all()
+    ]
+
     return {
         "historical_invoices": historical,
+        "historical_lines": historical_lines,
         "bank_changes": bank_changes,
         "purchase_orders": purchase_orders,
         "contracts": contracts,
         "gl_accounts": gl_accounts,
+        "departments": departments,
     }
 
 

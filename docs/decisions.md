@@ -54,9 +54,16 @@ are upper-cased into the canonical workflow statuses (`APPROVED`, `PAID`,
 { "validation_status": "PASSED|WARNING|BLOCKED", "findings": [], "coding_suggestions": [], "extraction": {} }
 ```
 
-The AI coding step degrades gracefully: a provider error (missing key, timeout,
-malformed JSON) yields `coding_suggestions: []` and never crashes analysis.
-Deterministic validation/matching findings are unaffected.
+The coding step is **per-line** (contract §5.1). It matches the vendor's
+historical lines first (deterministic, with support count and a reason), then
+falls back to one batched provider call for unmatched lines. History is scoped
+to the invoice's vendor and excludes the invoice being analyzed; line
+descriptions are treated as untrusted document data, and every suggested GL
+account and department is validated against the supplied masters. Unmatched or
+blank lines return an explicit null suggestion asking for manual review, never
+an invented account. A provider error (missing key, timeout, malformed JSON)
+preserves historical suggestions and leaves the rest null; analysis never
+crashes.
 
 ## Frontend alignment (Nov 2026)
 
@@ -210,7 +217,11 @@ already `PAID`, and §13 normalization mappings.
 
 - Extraction is **text-PDF only** (no OCR, no proven French/scan support) and
   uses a hardcoded model name; these are tracked as discrepancies vs. AGENTS.md §9.
-- Smart coding is **per-invoice**, not per-line, and suggests no department.
+- Coding is **history-first with an AI fallback**: lines with no similar
+  historical coding return a null suggestion for manual review. Token overlap
+  (not semantic embeddings) drives the history match; unusual descriptions may
+  miss a valid precedent. The coding model is configurable via `CODING_MODEL`
+  (falling back to `OPENAI_MODEL`).
 - Duplicate detection covers exact and reformatted numbers (`EXACT_DUPLICATE`,
   `BLOCK`) and near matches by vendor + amount + currency within a 7-day window
   (`POSSIBLE_DUPLICATE`, `WARNING`). Historical references now carry the payment

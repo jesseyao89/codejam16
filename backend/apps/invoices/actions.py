@@ -169,6 +169,23 @@ def to_invoice_data(invoice) -> dict:
         "total": str(invoice.total) if invoice.total is not None else None,
         "po_id": invoice.po_id,
         "contract_id": invoice.contract_id,
+        "department_id": invoice.department_id,
+        "ship_to_province": invoice.ship_to_province,
+        "line_items": [
+            {
+                "line_no": line.line_no,
+                "description": line.description,
+                "quantity": (
+                    str(line.quantity) if line.quantity is not None else None
+                ),
+                "unit_price": (
+                    str(line.unit_price) if line.unit_price is not None else None
+                ),
+                "amount": str(line.amount) if line.amount is not None else None,
+                "line_type": line.line_type,
+            }
+            for line in invoice.lines.all()
+        ],
     }
 
 
@@ -202,11 +219,19 @@ def analysis_extraction(invoice) -> dict:
 
 def run_analysis(invoice) -> dict:
     """Run the automation pipeline, persist results, and return the envelope."""
-    reference = build_reference_data()
+    reference = build_reference_data(
+        vendor_id=invoice.vendor_id,
+        exclude_invoice_id=invoice.invoice_id,
+    )
     # Never compare an invoice against itself.
     reference["historical_invoices"] = [
         row
         for row in reference["historical_invoices"]
+        if row.get("invoice_id") != invoice.invoice_id
+    ]
+    reference["historical_lines"] = [
+        row
+        for row in reference.get("historical_lines", [])
         if row.get("invoice_id") != invoice.invoice_id
     ]
     result = analyze_invoice(to_invoice_data(invoice), reference)
