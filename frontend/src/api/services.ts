@@ -222,8 +222,8 @@ export interface InvoiceLine {
  */
 export interface CodingSuggestion {
   line_no?: number
-  suggested_gl_account?: string
-  suggested_department_id?: string
+  suggested_gl_account?: string | null
+  suggested_department_id?: string | null
   confidence?: string | null
   reason: string
   account_number?: string

@@ -323,11 +323,21 @@ export default function InvoiceDetails({
   const lines = invoice?.lines ?? []
   const suggestions = invoice?.coding_suggestions ?? []
 
+  // One suggestion per line; unmatched lines carry a null GL account and a
+  // reason asking for manual review. Keep them visible instead of dropping.
   const lineSuggestions = suggestions.filter(
-    (suggestion) =>
-      typeof suggestion.line_no === 'number' &&
-      Boolean(suggestion.suggested_gl_account)
+    (suggestion) => typeof suggestion.line_no === 'number'
   )
+
+  const confidentLineNumbers = new Set(
+    lineSuggestions
+      .filter((suggestion) => Boolean(suggestion.suggested_gl_account))
+      .map((suggestion) => suggestion.line_no as number)
+  )
+
+  const manualReviewCount = lines.filter(
+    (line) => !confidentLineNumbers.has(line.line_no)
+  ).length
 
   const invoiceSuggestion = suggestions.find(
     (suggestion) => !suggestion.line_no && suggestion.account_number
@@ -879,8 +889,8 @@ export default function InvoiceDetails({
                       </Typography>
 
                       <Typography variant="caption" color="text.secondary">
-                        The current API returns one suggestion for the whole
-                        invoice. Review it per line before saving.
+                        Legacy invoice-level suggestion. Re-run analysis to
+                        generate per-line suggestions.
                       </Typography>
                     </Alert>
                   )}
@@ -936,6 +946,34 @@ export default function InvoiceDetails({
                         </Button>
                       )}
                     </Stack>
+
+                    {lines.length > 0 && lineSuggestions.length > 0 && (
+                      <Alert
+                        severity={
+                          manualReviewCount > 0 ? 'info' : 'success'
+                        }
+                        sx={{ mb: 1.5 }}
+                      >
+                        {confidentLineNumbers.size} of {lines.length} line
+                        {lines.length === 1 ? '' : 's'} have a GL suggestion
+                        {manualReviewCount > 0
+                          ? `; ${manualReviewCount} need manual review.`
+                          : '.'}
+                      </Alert>
+                    )}
+
+                    {lines.length > 0 &&
+                      lineSuggestions.length === 0 &&
+                      suggestions.length === 0 && (
+                        <Typography
+                          variant="caption"
+                          color="text.secondary"
+                          sx={{ display: 'block', mb: 1.5 }}
+                        >
+                          No coding suggestions were produced. Choose GL
+                          accounts manually, or run analysis again.
+                        </Typography>
+                      )}
 
                     {lines.length === 0 ? (
                       <Typography variant="body2" color="text.secondary">
@@ -1001,43 +1039,84 @@ export default function InvoiceDetails({
                                         : ''}
                                     </Typography>
 
-                                    {suggestion && (
+                                    {lineSuggestions.length > 0 && (
                                       <Box sx={{ mt: 0.5 }}>
-                                        <Typography
-                                          variant="caption"
-                                          color="text.secondary"
-                                          sx={{ display: 'block' }}
-                                        >
-                                          Suggested{' '}
-                                          {suggestion.suggested_gl_account}
-                                          {suggestion.suggested_department_id
-                                            ? ` / ${suggestion.suggested_department_id}`
-                                            : ''}
-                                          {suggestion.confidence
-                                            ? ` · confidence ${suggestion.confidence}`
-                                            : ''}
-                                        </Typography>
+                                        {suggestion ? (
+                                          <>
+                                            {suggestion.suggested_gl_account ? (
+                                              <Typography
+                                                variant="caption"
+                                                sx={{
+                                                  display: 'block',
+                                                  color: '#404D73',
+                                                  fontWeight: 600,
+                                                }}
+                                              >
+                                                Suggested{' '}
+                                                {
+                                                  suggestion.suggested_gl_account
+                                                }
+                                                {suggestion.suggested_department_id
+                                                  ? ` / ${suggestion.suggested_department_id}`
+                                                  : ''}
+                                                {suggestion.confidence
+                                                  ? ` · confidence ${suggestion.confidence}`
+                                                  : ''}
+                                              </Typography>
+                                            ) : (
+                                              <Typography
+                                                variant="caption"
+                                                sx={{
+                                                  display: 'block',
+                                                  color: '#B86B00',
+                                                  fontWeight: 600,
+                                                }}
+                                              >
+                                                No confident GL suggestion
+                                                {suggestion.suggested_department_id
+                                                  ? ` (department ${suggestion.suggested_department_id})`
+                                                  : ''}{' '}
+                                                — review this line manually.
+                                              </Typography>
+                                            )}
 
-                                        <Typography
-                                          variant="caption"
-                                          color="text.secondary"
-                                          sx={{ display: 'block' }}
-                                        >
-                                          {suggestion.reason}
-                                        </Typography>
+                                            {suggestion.reason && (
+                                              <Typography
+                                                variant="caption"
+                                                color="text.secondary"
+                                                sx={{ display: 'block' }}
+                                              >
+                                                {suggestion.reason}
+                                              </Typography>
+                                            )}
 
-                                        {editable && (
-                                          <Button
-                                            size="small"
-                                            onClick={() =>
-                                              applyLineSuggestion(
-                                                line.line_no,
-                                                suggestion
-                                              )
-                                            }
+                                            {editable &&
+                                              (suggestion.suggested_gl_account ||
+                                                suggestion.suggested_department_id) && (
+                                                <Button
+                                                  size="small"
+                                                  onClick={() =>
+                                                    applyLineSuggestion(
+                                                      line.line_no,
+                                                      suggestion
+                                                    )
+                                                  }
+                                                >
+                                                  {suggestion.suggested_gl_account
+                                                    ? 'Apply suggestion'
+                                                    : 'Apply department'}
+                                                </Button>
+                                              )}
+                                          </>
+                                        ) : (
+                                          <Typography
+                                            variant="caption"
+                                            color="text.secondary"
+                                            sx={{ display: 'block' }}
                                           >
-                                            Apply suggestion
-                                          </Button>
+                                            No suggestion for this line; choose
+                                            a GL account manually.
+                                          </Typography>
                                         )}
                                       </Box>
                                     )}
