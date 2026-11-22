@@ -4,11 +4,16 @@ version = "0.1.0"
 description = "Brim AP Automation backend (Django + DRF)"
 requires-python = ">=3.12"
 dependencies = [
+    "dj-database-url>=3.1.2",
     "django>=5.2,<6.0",
+    "django-cors-headers>=4.9.0",
     "djangorestframework>=3.18.3",
+    "gunicorn>=27.0.1",
     "openai>=3.57.0",
+    "psycopg[binary]>=3.3.9",
     "pymupdf>=2.1",
     "python-dotenv>=1.2.4",
+    "whitenoise>=6.12.0",
 ]
 
 [dependency-groups]
