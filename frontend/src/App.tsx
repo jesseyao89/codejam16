@@ -8,6 +8,7 @@ import Login from './Login'
 import Audit from './Audit'
 import Inbox from './Inbox'
 import Vendors from './Vendors'
+import Delegations from './Delegations'
 
 import {
   authService,
@@ -21,6 +22,7 @@ import {
 import { getToken, clearToken } from './api/client'
 
 import {
+  canReadDelegations,
   canReadInbox,
   canUploadInvoice,
   canViewAudit,
@@ -72,6 +74,7 @@ import LogoutIcon from '@mui/icons-material/Logout'
 import HistoryIcon from '@mui/icons-material/History'
 import InboxIcon from '@mui/icons-material/Inbox'
 import BusinessIcon from '@mui/icons-material/Business'
+import SwapHorizIcon from '@mui/icons-material/SwapHoriz'
 
 import InvoiceDetails from './InvoiceDetails'
 import InvoiceUpload from './InvoiceUpload'
@@ -125,6 +128,11 @@ const menuItems: MenuItem[] = [
   { label: 'Invoices', icon: <ReceiptLongIcon /> },
   { label: 'Approvals', icon: <FactCheckIcon /> },
   { label: 'Validation Review', icon: <RuleIcon /> },
+  {
+    label: 'Delegations',
+    icon: <SwapHorizIcon />,
+    visible: canReadDelegations,
+  },
   {
     label: 'AP Inbox',
     icon: <InboxIcon />,
@@ -1031,7 +1039,11 @@ function App() {
           {/* OTHER PAGES */}
 
           {currentPage === 'Approvals' && (
-            <Approvals user={user} onDataChanged={refreshData} />
+            <Approvals
+              user={user}
+              onDataChanged={refreshData}
+              onOpenDelegations={() => setCurrentPage('Delegations')}
+            />
           )}
           {currentPage === 'Validation Review' && (
             <ValidationReview
@@ -1049,6 +1061,9 @@ function App() {
                 setSelectedInvoiceId(invoiceId)
               }
             />
+          )}
+          {currentPage === 'Delegations' && canReadDelegations(user.role) && (
+            <Delegations user={user} onDataChanged={refreshData} />
           )}
           {currentPage === 'Payments' && (
             <Payments user={user} onDataChanged={refreshData} />
